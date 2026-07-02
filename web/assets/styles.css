@@ -1,0 +1,178 @@
+/* ==========================================================================
+   WASTEFLOW — shared design system
+   Palette is a working kitchen's own vocabulary: paper ticket, chalkboard
+   ink, and the moss-green of a "waste reduction" sticker. Ranked lists use
+   numbering because they ARE rankings (outlet leaderboard) — nowhere else.
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  /* --- Palette --- */
+  --ink: #16211C;
+  --ink-soft: #3C4A40;
+  --paper: #F6F4EE;
+  --paper-raised: #FFFFFF;
+  --moss: #2F6B4F;
+  --moss-dark: #21523B;
+  --sprout: #6FCB9F;
+  --amber: #E2A33D;
+  --clay: #C1594A;
+  --mist: #DCE3DA;
+  --mist-dark: #C6D0C4;
+
+  /* --- Chart categorical palette --- */
+  --chart-1: #2F6B4F;
+  --chart-2: #E2A33D;
+  --chart-3: #C1594A;
+  --chart-4: #6FCB9F;
+  --chart-5: #4A7A9E;
+  --chart-6: #8B5FA8;
+  --chart-7: #B08968;
+  --chart-8: #5A6B57;
+
+  /* --- Type --- */
+  --font-display: 'Space Grotesk', 'IBM Plex Sans', sans-serif;
+  --font-body: 'IBM Plex Sans', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+
+  /* --- Layout --- */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --shadow-card: 0 1px 2px rgba(22,33,28,0.06), 0 8px 24px rgba(22,33,28,0.06);
+  --shadow-pop: 0 12px 32px rgba(22,33,28,0.16);
+
+  --bg: var(--paper);
+  --surface: var(--paper-raised);
+  --text: var(--ink);
+  --text-soft: var(--ink-soft);
+  --border: var(--mist);
+}
+
+[data-theme="dark"] {
+  --bg: #12180F;
+  --surface: #1B241A;
+  --text: #EDF2EA;
+  --text-soft: #A9B7A6;
+  --border: #2C3830;
+  --mist: #2C3830;
+  --paper-raised: #1B241A;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.25s ease, color 0.25s ease;
+}
+
+h1, h2, h3, h4, .display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+  color: var(--text);
+}
+
+.mono { font-family: var(--font-mono); }
+
+a { color: var(--moss); }
+[data-theme="dark"] a { color: var(--sprout); }
+
+button { font-family: var(--font-body); cursor: pointer; }
+
+::selection { background: var(--sprout); color: var(--ink); }
+
+/* --- Focus visibility (accessibility floor) --- */
+a:focus-visible, button:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--moss);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* --- Buttons --- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-weight: 600; font-size: 15px; border-radius: var(--radius-sm);
+  border: 1px solid transparent; padding: 12px 20px; transition: all 0.15s ease;
+  line-height: 1.2;
+}
+.btn-primary { background: var(--moss); color: #fff; }
+.btn-primary:hover { background: var(--moss-dark); }
+.btn-primary:active { transform: scale(0.98); }
+.btn-ghost { background: transparent; color: var(--text); border-color: var(--border); }
+.btn-ghost:hover { background: var(--mist); }
+.btn-danger { background: var(--clay); color: #fff; }
+.btn-danger:hover { filter: brightness(0.92); }
+.btn-block { width: 100%; }
+.btn-lg { padding: 16px 24px; font-size: 16px; border-radius: var(--radius-md); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* --- Cards / surfaces --- */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-card);
+}
+
+/* --- Form fields --- */
+.field { margin-bottom: 18px; }
+.field label {
+  display: block; font-size: 13px; font-weight: 600; color: var(--text-soft);
+  text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 8px;
+}
+.field .required { color: var(--clay); }
+.input, .select, textarea.input {
+  width: 100%; padding: 14px 16px; border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border); background: var(--surface); color: var(--text);
+  font-family: var(--font-body); font-size: 16px; /* 16px prevents iOS zoom-on-focus */
+  transition: border-color 0.15s ease;
+}
+.input:focus, .select:focus, textarea.input:focus { border-color: var(--moss); outline: none; }
+.input.err, .select.err { border-color: var(--clay); }
+.err-msg { color: var(--clay); font-size: 13px; margin-top: 6px; display: none; }
+.field.invalid .err-msg { display: block; }
+.hint { font-size: 12px; color: var(--text-soft); margin-top: 6px; }
+
+/* --- Badges / chips --- */
+.badge {
+  display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; background: var(--mist); color: var(--ink-soft);
+}
+.badge-amber { background: rgba(226,163,61,0.18); color: #8A5F16; }
+[data-theme="dark"] .badge-amber { color: var(--amber); }
+.badge-clay { background: rgba(193,89,74,0.18); color: #8A382A; }
+[data-theme="dark"] .badge-clay { color: var(--clay); }
+.badge-moss { background: rgba(47,107,79,0.15); color: var(--moss); }
+
+/* --- Toast --- */
+.toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px);
+  background: var(--ink); color: var(--paper); padding: 14px 22px; border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop); font-weight: 500; opacity: 0; pointer-events: none;
+  transition: all 0.25s ease; z-index: 999; display: flex; align-items: center; gap: 10px;
+  max-width: calc(100vw - 32px);
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.success { background: var(--moss); }
+.toast.error { background: var(--clay); }
+
+/* --- Scrollbar (subtle) --- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--mist-dark); border-radius: 6px; }
+
+/* --- Utility --- */
+.flex { display: flex; }
+.gap-8 { gap: 8px; } .gap-12 { gap: 12px; } .gap-16 { gap: 16px; }
+.center { align-items: center; justify-content: center; }
+.spacer { flex: 1; }
+.text-soft { color: var(--text-soft); }
+.hidden { display: none !important; }

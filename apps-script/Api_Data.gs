@@ -1,0 +1,181 @@
+/**
+ * Core data API: lookups for the form dropdowns, and CRUD for waste entries.
+ * Role scoping rules (enforced server-side, not just hidden in the UI):
+ *   Admin          -> sees / edits / deletes everything
+ *   Outlet Manager -> sees only their own outlet; can edit/delete only entries
+ *                     dated today for their outlet
+ *   Staff          -> sees only their own submissions; cannot edit/delete
+ */
+
+const PHOTO_FOLDER_NAME = 'WasteFlow Photos';
+
+function getPhotoFolder_() {
+  const folders = DriveApp.getFoldersByName(PHOTO_FOLDER_NAME);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(PHOTO_FOLDER_NAME);
+}
+
+/** action=lookups -> everything the mobile form / filters need in one call. */
+function apiLookups_() {
+  const items = readAll_(SHEET_NAMES.ITEMS).map(r => ({
+    name: r.ItemName, category: r.Category, unit: r.DefaultUnit, cost: r.DefaultCostPerUnit
+  }));
+  const outlets = readAll_(SHEET_NAMES.OUTLETS).filter(r => String(r.Active).toLowerCase() !== 'no').map(r => r.OutletName);
+  const departments = readAll_(SHEET_NAMES.DEPARTMENTS).filter(r => String(r.Active).toLowerCase() !== 'no').map(r => r.DepartmentName);
+  const categories = readAll_(SHEET_NAMES.CATEGORIES).map(r => r.CategoryName);
+  const reasons = readAll_(SHEET_NAMES.REASONS).map(r => r.ReasonName);
+  const settings = {};
+  readAll_(SHEET_NAMES.SETTINGS).forEach(r => settings[r.Key] = r.Value);
+  return { ok: true, items, outlets, departments, categories, reasons, settings };
+}
+
+function genEntryId_() {
+  return 'WF-' + Utilities.formatDate(new Date(), 'Asia/Dubai', 'yyMMdd') + '-' + Math.random().toString(36).substring(2, 7).toUpperCase();
+}
+
+/**
+ * action=submitEntry — used by the mobile form. `token` is optional: if the
+ * staff member is logged in it's used to stamp SubmittedBy, otherwise the
+ * free-text StaffName field is trusted (kiosk-style use with no login).
+ */
+function apiSubmitEntry_(body) {
+  const session = getSession_(body.token);
+  const required = ['date', 'outlet', 'department', 'category', 'itemName', 'quantity', 'unit', 'staffName'];
+  for (const f of required) {
+    if (body[f] === undefined || body[f] === null || String(body[f]).trim() === '') {
+      return { ok: false, error: 'Missing required field: ' + f };
+    }
+  }
+  const qty = Number(body.quantity);
+  if (isNaN(qty) || qty <= 0) return { ok: false, error: 'Quantity must be a positive number.' };
+  const cost = body.estimatedCost ? Number(body.estimatedCost) : 0;
+
+  let photoUrl = '';
+  if (body.photoBase64 && body.photoName) {
+    try {
+      const blob = Utilities.newBlob(Utilities.base64Decode(body.photoBase64), body.photoMime || 'image/jpeg', body.photoName);
+      const file = getPhotoFolder_().createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      photoUrl = file.getUrl();
+    } catch (err) {
+      // Non-fatal — the entry still gets saved without a photo.
+      photoUrl = '';
+    }
+  }
+
+  const sh = sheet_(SHEET_NAMES.LOG);
+  const row = [
+    genEntryId_(),
+    new Date(),
+    body.date,
+    body.outlet,
+    body.department,
+    body.category,
+    body.itemName,
+    qty,
+    body.unit,
+    cost,
+    body.reason || '',
+    body.staffName,
+    photoUrl,
+    body.remarks || '',
+    session ? session.username : '',
+    'Active'
+  ];
+  sh.appendRow(row);
+  maybeSendThresholdAlert_(body.outlet, body.date);
+  return { ok: true, entryId: row[0] };
+}
+
+/** action=entries — scoped by role, optionally filtered. Used by the admin dashboard. */
+function apiGetEntries_(body) {
+  const session = getSession_(body.token);
+  if (!session) return { ok: false, error: 'Session expired. Please log in again.' };
+
+  let rows = readAll_(SHEET_NAMES.LOG).filter(r => r.Status !== 'Deleted');
+
+  // Server-side role scoping — this is the real access control, not the UI.
+  if (session.role === 'Outlet Manager') {
+    rows = rows.filter(r => r.Outlet === session.outlet);
+  } else if (session.role === 'Staff') {
+    rows = rows.filter(r => r.SubmittedBy === session.username);
+  }
+
+  const f = body.filters || {};
+  if (f.dateFrom) rows = rows.filter(r => String(r.Date) >= f.dateFrom);
+  if (f.dateTo) rows = rows.filter(r => String(r.Date) <= f.dateTo);
+  if (f.outlet) rows = rows.filter(r => r.Outlet === f.outlet);
+  if (f.department) rows = rows.filter(r => r.Department === f.department);
+  if (f.category) rows = rows.filter(r => r.Category === f.category);
+  if (f.item) rows = rows.filter(r => r.ItemName === f.item);
+  if (f.staff) rows = rows.filter(r => r.StaffName === f.staff);
+
+  rows.forEach(r => { delete r._row; });
+  return { ok: true, entries: rows };
+}
+
+/** action=updateEntry — Admin: any entry. Outlet Manager: only today's, own outlet. */
+function apiUpdateEntry_(body) {
+  const session = getSession_(body.token);
+  if (!session) return { ok: false, error: 'Session expired. Please log in again.' };
+
+  const sh = sheet_(SHEET_NAMES.LOG);
+  const rows = readAll_(SHEET_NAMES.LOG);
+  const entry = rows.find(r => r.EntryID === body.entryId);
+  if (!entry) return { ok: false, error: 'Entry not found.' };
+
+  if (!canEditEntry_(session, entry)) return { ok: false, error: 'You do not have permission to edit this entry.' };
+
+  const editable = ['Outlet', 'Department', 'Category', 'ItemName', 'Quantity', 'Unit', 'EstimatedCost', 'Reason', 'Remarks'];
+  editable.forEach(field => {
+    const key = field.charAt(0).toLowerCase() + field.slice(1);
+    if (body[key] !== undefined) {
+      sh.getRange(entry._row, LOG_HEADERS.indexOf(field) + 1).setValue(body[key]);
+    }
+  });
+  return { ok: true };
+}
+
+/** action=deleteEntry — soft delete (Status -> Deleted) so nothing is ever truly lost. */
+function apiDeleteEntry_(body) {
+  const session = getSession_(body.token);
+  if (!session) return { ok: false, error: 'Session expired. Please log in again.' };
+
+  const sh = sheet_(SHEET_NAMES.LOG);
+  const rows = readAll_(SHEET_NAMES.LOG);
+  const entry = rows.find(r => r.EntryID === body.entryId);
+  if (!entry) return { ok: false, error: 'Entry not found.' };
+
+  if (!canEditEntry_(session, entry)) return { ok: false, error: 'You do not have permission to delete this entry.' };
+
+  sh.getRange(entry._row, LOG_HEADERS.indexOf('Status') + 1).setValue('Deleted');
+  return { ok: true };
+}
+
+function canEditEntry_(session, entry) {
+  if (session.role === 'Admin') return true;
+  if (session.role === 'Outlet Manager') {
+    const today = Utilities.formatDate(new Date(), 'Asia/Dubai', 'yyyy-MM-dd');
+    return entry.Outlet === session.outlet && String(entry.Date) === today;
+  }
+  return false;
+}
+
+/** action=addOutlet / addDepartment / addReason / addItem — Admin only, for growing the system. */
+function apiAddLookup_(body) {
+  const session = getSession_(body.token);
+  if (!session || session.role !== 'Admin') return { ok: false, error: 'Admin access required.' };
+
+  const map = {
+    outlet: { sheet: SHEET_NAMES.OUTLETS, row: v => [v, 'Yes'] },
+    department: { sheet: SHEET_NAMES.DEPARTMENTS, row: v => [v, 'Yes'] },
+    reason: { sheet: SHEET_NAMES.REASONS, row: v => [v] },
+    item: { sheet: SHEET_NAMES.ITEMS, row: v => [v, body.category || 'Other / Uncategorized', body.unit || 'Pieces', body.cost || ''] }
+  };
+  const cfg = map[body.lookupType];
+  if (!cfg || !body.value) return { ok: false, error: 'Invalid lookup type or value.' };
+
+  const sh = sheet_(cfg.sheet);
+  sh.appendRow(cfg.row(String(body.value).trim()));
+  return { ok: true };
+}
