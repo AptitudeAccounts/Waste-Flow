@@ -1,244 +1,192 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>WasteFlow — Log Waste</title>
-<link rel="stylesheet" href="assets/styles.css">
-<style>
-  body { padding-bottom: 40px; }
-  .topbar {
-    position: sticky; top: 0; z-index: 50; background: var(--bg);
-    display: flex; align-items: center; gap: 12px; padding: 16px 18px 12px;
-    border-bottom: 1px solid var(--border);
-  }
-  .topbar .mark { width: 34px; height: 34px; border-radius: 9px; background: var(--moss); flex-shrink:0; }
-  .topbar .mark svg { width: 100%; height: 100%; }
-  .topbar h1 { font-size: 18px; }
-  .topbar .sub { font-size: 12px; color: var(--text-soft); margin-top: 1px; }
-  .icon-btn {
-    width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--border);
-    background: var(--surface); display:flex; align-items:center; justify-content:center; flex-shrink: 0;
-  }
+/**
+ * Core data API: lookups for the form dropdowns, and CRUD for waste entries.
+ * Role scoping rules (enforced server-side, not just hidden in the UI):
+ *   Admin          -> sees / edits / deletes everything
+ *   Outlet Manager -> sees only their own outlet; can edit/delete only entries
+ *                     dated today for their outlet
+ *   Staff          -> sees only their own submissions; cannot edit/delete
+ */
 
-  .wrap { max-width: 560px; margin: 0 auto; padding: 18px; }
-  .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-soft); font-weight: 700; margin: 26px 0 10px 2px; }
-  .section-title:first-child { margin-top: 4px; }
+const PHOTO_FOLDER_NAME = 'WasteFlow Photos';
 
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+function getPhotoFolder_() {
+  const folders = DriveApp.getFoldersByName(PHOTO_FOLDER_NAME);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(PHOTO_FOLDER_NAME);
+}
 
-  /* Item picker */
-  .chip-row { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 10px; -webkit-overflow-scrolling: touch; }
-  .chip-row::-webkit-scrollbar { display: none; }
-  .chip {
-    flex-shrink: 0; padding: 9px 15px; border-radius: 999px; border: 1.5px solid var(--border);
-    background: var(--surface); font-size: 13.5px; font-weight: 600; color: var(--text-soft); white-space: nowrap;
-  }
-  .chip.active { background: var(--moss); border-color: var(--moss); color: #fff; }
-  .item-list { max-height: 300px; overflow-y: auto; border: 1.5px solid var(--border); border-radius: var(--radius-md); }
-  .item-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 15px; font-weight: 500;
-  }
-  .item-row:last-child { border-bottom: none; }
-  .item-row:active { background: var(--mist); }
-  .item-row .cat { font-size: 11.5px; color: var(--text-soft); font-weight: 400; }
-  .item-empty { padding: 28px 16px; text-align: center; color: var(--text-soft); font-size: 14px; }
+/** action=lookups -> everything the mobile form / filters need in one call. */
+function apiLookups_() {
+  const items = readAll_(SHEET_NAMES.ITEMS).map(r => ({
+    name: r.ItemName, category: r.Category, unit: r.DefaultUnit, cost: r.DefaultCostPerUnit
+  }));
+  const outlets = readAll_(SHEET_NAMES.OUTLETS).filter(r => String(r.Active).toLowerCase() !== 'no').map(r => r.OutletName);
+  const departments = readAll_(SHEET_NAMES.DEPARTMENTS).filter(r => String(r.Active).toLowerCase() !== 'no').map(r => r.DepartmentName);
+  const categories = readAll_(SHEET_NAMES.CATEGORIES).map(r => r.CategoryName);
+  const reasons = readAll_(SHEET_NAMES.REASONS).map(r => r.ReasonName);
+  const settings = {};
+  readAll_(SHEET_NAMES.SETTINGS).forEach(r => settings[r.Key] = r.Value);
+  return { ok: true, items, outlets, departments, categories, reasons, settings };
+}
 
-  .selected-item {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 16px; border-radius: var(--radius-md); background: rgba(47,107,79,0.1); border: 1.5px solid var(--moss);
-  }
-  [data-theme="dark"] .selected-item { background: rgba(111,203,159,0.1); }
-  .selected-item strong { font-family: var(--font-display); font-size: 16px; }
-  .selected-item .cat { font-size: 12.5px; color: var(--text-soft); margin-top: 2px; }
+function genEntryId_() {
+  return 'WF-' + Utilities.formatDate(new Date(), 'Asia/Dubai', 'yyMMdd') + '-' + Math.random().toString(36).substring(2, 7).toUpperCase();
+}
 
-  /* Quantity stepper */
-  .stepper { display: flex; align-items: stretch; border: 1.5px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
-  .stepper button {
-    width: 54px; border: none; background: var(--surface); font-size: 22px; font-weight: 700; color: var(--moss);
-  }
-  .stepper button:active { background: var(--mist); }
-  .stepper input {
-    flex: 1; border: none; border-left: 1.5px solid var(--border); border-right: 1.5px solid var(--border);
-    text-align: center; font-size: 18px; font-family: var(--font-mono); font-weight: 500; background: var(--surface); color: var(--text);
+/**
+ * action=submitEntry — used by the mobile form. `token` is optional: if the
+ * staff member is logged in it's used to stamp SubmittedBy, otherwise the
+ * free-text StaffName field is trusted (kiosk-style use with no login).
+ */
+function apiSubmitEntry_(body) {
+  const session = getSession_(body.token);
+
+  // If the submitter is logged in and locked to a specific outlet (Staff or
+  // Outlet Manager), they can only submit for THAT outlet — this is enforced
+  // here, not just hidden in the UI, so it can't be bypassed by editing the
+  // request. Admins and unlocked accounts (outlet = 'All') are unrestricted.
+  if (session && session.outlet && session.outlet !== 'All' && session.role !== 'Admin') {
+    if (body.outlet !== session.outlet) {
+      return { ok: false, error: `Your account is restricted to ${session.outlet}. Submissions for other outlets are not allowed.` };
+    }
   }
 
-  /* Photo */
-  .photo-picker {
-    border: 1.5px dashed var(--border); border-radius: var(--radius-md); padding: 20px;
-    display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--text-soft);
-    text-align: center; font-size: 13.5px;
+  const required = ['date', 'outlet', 'department', 'category', 'itemName', 'quantity', 'unit', 'staffName'];
+  for (const f of required) {
+    if (body[f] === undefined || body[f] === null || String(body[f]).trim() === '') {
+      return { ok: false, error: 'Missing required field: ' + f };
+    }
   }
-  .photo-preview { max-width: 100%; max-height: 220px; border-radius: var(--radius-sm); margin-top: 10px; display: none; }
+  const qty = Number(body.quantity);
+  if (isNaN(qty) || qty <= 0) return { ok: false, error: 'Quantity must be a positive number.' };
+  const cost = body.estimatedCost ? Number(body.estimatedCost) : 0;
 
-  .actions { display: flex; gap: 12px; margin-top: 28px; }
-
-  .who-bar {
-    display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: var(--radius-md);
-    background: var(--surface); border: 1px solid var(--border); font-size: 13.5px; margin-bottom: 4px;
+  let photoUrl = '';
+  if (body.photoBase64 && body.photoName) {
+    try {
+      const blob = Utilities.newBlob(Utilities.base64Decode(body.photoBase64), body.photoMime || 'image/jpeg', body.photoName);
+      const file = getPhotoFolder_().createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      photoUrl = file.getUrl();
+    } catch (err) {
+      // Non-fatal — the entry still gets saved without a photo.
+      photoUrl = '';
+    }
   }
-  .who-bar .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--sprout); color: var(--ink);
-    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
-  .who-bar a { font-size: 13px; font-weight: 600; }
 
-  .offline-banner {
-    display: none; background: var(--amber); color: #4a3103; font-size: 13px; font-weight: 600;
-    text-align: center; padding: 8px; border-radius: var(--radius-sm); margin-bottom: 14px;
+  const sh = sheet_(SHEET_NAMES.LOG);
+  const row = [
+    genEntryId_(),
+    new Date(),
+    body.date,
+    body.outlet,
+    body.department,
+    body.category,
+    body.itemName,
+    qty,
+    body.unit,
+    cost,
+    body.reason || '',
+    body.staffName,
+    photoUrl,
+    body.remarks || '',
+    session ? session.username : '',
+    'Active'
+  ];
+  sh.appendRow(row);
+  maybeSendThresholdAlert_(body.outlet, body.date);
+  return { ok: true, entryId: row[0] };
+}
+
+/** action=entries — scoped by role, optionally filtered. Used by the admin dashboard. */
+function apiGetEntries_(body) {
+  const session = getSession_(body.token);
+  if (!session) return { ok: false, error: 'Session expired. Please log in again.' };
+
+  let rows = readAll_(SHEET_NAMES.LOG).filter(r => r.Status !== 'Deleted');
+
+  // Server-side role scoping — this is the real access control, not the UI.
+  if (session.role === 'Outlet Manager') {
+    rows = rows.filter(r => r.Outlet === session.outlet);
+  } else if (session.role === 'Staff') {
+    rows = rows.filter(r => r.SubmittedBy === session.username);
   }
-  .offline-banner.show { display: block; }
 
-  #successScreen {
-    position: fixed; inset: 0; background: var(--bg); z-index: 100; display: none;
-    flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px;
+  const f = body.filters || {};
+  if (f.dateFrom) rows = rows.filter(r => String(r.Date) >= f.dateFrom);
+  if (f.dateTo) rows = rows.filter(r => String(r.Date) <= f.dateTo);
+  if (f.outlet) rows = rows.filter(r => r.Outlet === f.outlet);
+  if (f.department) rows = rows.filter(r => r.Department === f.department);
+  if (f.category) rows = rows.filter(r => r.Category === f.category);
+  if (f.item) rows = rows.filter(r => r.ItemName === f.item);
+  if (f.staff) rows = rows.filter(r => r.StaffName === f.staff);
+
+  rows.forEach(r => { delete r._row; });
+  return { ok: true, entries: rows };
+}
+
+/** action=updateEntry — Admin: any entry. Outlet Manager: only today's, own outlet. */
+function apiUpdateEntry_(body) {
+  const session = getSession_(body.token);
+  if (!session) return { ok: false, error: 'Session expired. Please log in again.' };
+
+  const sh = sheet_(SHEET_NAMES.LOG);
+  const rows = readAll_(SHEET_NAMES.LOG);
+  const entry = rows.find(r => r.EntryID === body.entryId);
+  if (!entry) return { ok: false, error: 'Entry not found.' };
+
+  if (!canEditEntry_(session, entry)) return { ok: false, error: 'You do not have permission to edit this entry.' };
+
+  const editable = ['Outlet', 'Department', 'Category', 'ItemName', 'Quantity', 'Unit', 'EstimatedCost', 'Reason', 'Remarks'];
+  editable.forEach(field => {
+    const key = field.charAt(0).toLowerCase() + field.slice(1);
+    if (body[key] !== undefined) {
+      sh.getRange(entry._row, LOG_HEADERS.indexOf(field) + 1).setValue(body[key]);
+    }
+  });
+  return { ok: true };
+}
+
+/** action=deleteEntry — soft delete (Status -> Deleted) so nothing is ever truly lost. */
+function apiDeleteEntry_(body) {
+  const session = getSession_(body.token);
+  if (!session) return { ok: false, error: 'Session expired. Please log in again.' };
+
+  const sh = sheet_(SHEET_NAMES.LOG);
+  const rows = readAll_(SHEET_NAMES.LOG);
+  const entry = rows.find(r => r.EntryID === body.entryId);
+  if (!entry) return { ok: false, error: 'Entry not found.' };
+
+  if (!canEditEntry_(session, entry)) return { ok: false, error: 'You do not have permission to delete this entry.' };
+
+  sh.getRange(entry._row, LOG_HEADERS.indexOf('Status') + 1).setValue('Deleted');
+  return { ok: true };
+}
+
+function canEditEntry_(session, entry) {
+  if (session.role === 'Admin') return true;
+  if (session.role === 'Outlet Manager') {
+    const today = Utilities.formatDate(new Date(), 'Asia/Dubai', 'yyyy-MM-dd');
+    return entry.Outlet === session.outlet && String(entry.Date) === today;
   }
-  #successScreen.show { display: flex; }
-  .success-ring {
-    width: 84px; height: 84px; border-radius: 50%; background: var(--moss); display: flex; align-items: center;
-    justify-content: center; margin-bottom: 22px;
-  }
-</style>
-</head>
-<body>
+  return false;
+}
 
-  <div class="topbar">
-    <div class="mark">
-      <svg viewBox="0 0 34 34" fill="none"><path d="M9 12h16M9 17h16M9 22h10" stroke="#F6F4EE" stroke-width="2.4" stroke-linecap="round"/></svg>
-    </div>
-    <div>
-      <h1>WasteFlow</h1>
-      <div class="sub">Log waste in under a minute</div>
-    </div>
-    <div class="spacer"></div>
-    <button class="icon-btn" id="themeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
-  </div>
+/** action=addOutlet / addDepartment / addReason / addItem — Admin only, for growing the system. */
+function apiAddLookup_(body) {
+  const session = getSession_(body.token);
+  if (!session || session.role !== 'Admin') return { ok: false, error: 'Admin access required.' };
 
-  <div class="wrap">
+  const map = {
+    outlet: { sheet: SHEET_NAMES.OUTLETS, row: v => [v, 'Yes'] },
+    department: { sheet: SHEET_NAMES.DEPARTMENTS, row: v => [v, 'Yes'] },
+    reason: { sheet: SHEET_NAMES.REASONS, row: v => [v] },
+    item: { sheet: SHEET_NAMES.ITEMS, row: v => [v, body.category || 'Other / Uncategorized', body.unit || 'Pieces', body.cost || ''] }
+  };
+  const cfg = map[body.lookupType];
+  if (!cfg || !body.value) return { ok: false, error: 'Invalid lookup type or value.' };
 
-    <div class="offline-banner" id="offlineBanner">You're offline — entries will save locally and sync automatically.</div>
-
-    <div class="who-bar">
-      <div class="avatar" id="whoAvatar">?</div>
-      <div style="flex:1">
-        <div id="whoLabel" style="font-weight:600">Not signed in — enter your name below</div>
-        <div class="text-soft" id="whoSub">Anyone at your outlet can submit without an account.</div>
-      </div>
-      <a href="admin.html" id="signInLink">Sign in →</a>
-    </div>
-
-    <form id="wasteForm" novalidate>
-
-      <div class="section-title">When &amp; where</div>
-      <div class="grid-2">
-        <div class="field">
-          <label>Date <span class="required">*</span></label>
-          <input class="input" type="date" name="date" id="fDate" required>
-          <div class="err-msg">Date is required.</div>
-        </div>
-        <div class="field">
-          <label>Outlet <span class="required">*</span></label>
-          <select class="select" name="outlet" id="fOutlet" required></select>
-          <div class="err-msg">Select an outlet.</div>
-        </div>
-      </div>
-      <div class="field">
-        <label>Department <span class="required">*</span></label>
-        <select class="select" name="department" id="fDepartment" required></select>
-        <div class="err-msg">Select a department.</div>
-      </div>
-
-      <div class="section-title">What was wasted <span class="required">*</span></div>
-      <div id="itemPickerBlock">
-        <input class="input" type="search" id="itemSearch" placeholder="Search the item list…" style="margin-bottom:10px;">
-        <div class="chip-row" id="categoryChips"></div>
-        <div class="item-list" id="itemList"></div>
-      </div>
-      <div class="selected-item hidden" id="selectedItemBlock">
-        <div>
-          <strong id="selectedItemName"></strong>
-          <div class="cat" id="selectedItemCat"></div>
-        </div>
-        <button type="button" class="btn btn-ghost" id="changeItemBtn">Change</button>
-      </div>
-      <div class="err-msg" id="itemErr" style="display:none">Select an item.</div>
-
-      <div class="section-title">How much</div>
-      <div class="grid-2">
-        <div class="field">
-          <label>Quantity <span class="required">*</span></label>
-          <div class="stepper">
-            <button type="button" id="qtyMinus" aria-label="Decrease">–</button>
-            <input type="number" inputmode="decimal" id="fQuantity" name="quantity" value="1" min="0" step="0.1">
-            <button type="button" id="qtyPlus" aria-label="Increase">+</button>
-          </div>
-        </div>
-        <div class="field">
-          <label>Unit <span class="required">*</span></label>
-          <select class="select" name="unit" id="fUnit" required>
-            <option value="Kg">Kg</option>
-            <option value="Pieces">Pieces</option>
-            <option value="Liters">Liters</option>
-          </select>
-        </div>
-      </div>
-      <div class="field">
-        <label>Estimated cost (AED)</label>
-        <input class="input" type="number" inputmode="decimal" name="estimatedCost" id="fCost" min="0" step="0.01" placeholder="0.00">
-        <div class="hint">Auto-filled from the item catalog when known — adjust if needed.</div>
-      </div>
-
-      <div class="section-title">Why</div>
-      <div class="field">
-        <label>Reason for waste <span class="required">*</span></label>
-        <select class="select" name="reason" id="fReason" required></select>
-        <div class="err-msg">Select a reason.</div>
-      </div>
-
-      <div class="section-title">Who</div>
-      <div class="field">
-        <label>Staff name <span class="required">*</span></label>
-        <input class="input" type="text" name="staffName" id="fStaffName" placeholder="Your full name" required>
-        <div class="err-msg">Enter your name.</div>
-      </div>
-
-      <div class="section-title">Photo (optional)</div>
-      <div class="field">
-        <label class="photo-picker" id="photoPicker" for="fPhoto">
-          <span style="font-size:22px">📷</span>
-          <span id="photoLabel">Tap to take or upload a photo</span>
-          <input type="file" accept="image/*" capture="environment" id="fPhoto" style="display:none">
-        </label>
-        <img class="photo-preview" id="photoPreview" alt="Selected photo preview">
-      </div>
-
-      <div class="field">
-        <label>Remarks</label>
-        <textarea class="input" name="remarks" id="fRemarks" rows="3" placeholder="Anything else worth noting…"></textarea>
-      </div>
-
-      <div class="actions">
-        <button type="button" class="btn btn-ghost btn-block btn-lg" id="clearBtn">Clear form</button>
-        <button type="submit" class="btn btn-primary btn-block btn-lg" id="submitBtn">Submit</button>
-      </div>
-    </form>
-  </div>
-
-  <div id="successScreen">
-    <div class="success-ring">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M4 12.5L9.5 18L20 6" stroke="#F6F4EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </div>
-    <h2 style="font-size:22px; margin-bottom:8px;">Entry logged</h2>
-    <p class="text-soft" style="max-width:280px; margin-bottom:26px;">Thanks — this has been saved to the waste log.</p>
-    <div style="display:flex; gap:12px; width:100%; max-width:280px;">
-      <button class="btn btn-ghost btn-block" id="viewAdminBtn">Dashboard</button>
-      <button class="btn btn-primary btn-block" id="logAnotherBtn">Log another</button>
-    </div>
-  </div>
-
-  <div class="toast" id="toast"></div>
-
-  <script src="assets/config.js"></script>
-  <script src="assets/api.js"></script>
-  <script src="assets/staff.js"></script>
-</body>
-</html>
+  const sh = sheet_(cfg.sheet);
+  sh.appendRow(cfg.row(String(body.value).trim()));
+  return { ok: true };
+}
