@@ -402,7 +402,31 @@
     </form>
   </div>
 </div>
-<script src="assets/config.js"></script>
+<div class="modal-overlay" id="editUserModal">
+  <div class="card modal-box">
+    <h3>Edit user</h3>
+    <form id="editUserForm">
+      <input type="hidden" id="euUsername">
+      <div class="field"><label>Username</label><input class="input" id="euUsernameDisplay" disabled></div>
+      <div class="field"><label>Full name</label><input class="input" id="euFullName" required></div>
+      <div class="field"><label>Email</label><input class="input" type="email" id="euEmail"></div>
+      <div class="field">
+        <label>Role</label>
+        <select class="select" id="euRole"><option>Admin</option><option>Outlet Manager</option><option>Staff</option></select>
+      </div>
+      <div class="field"><label>Outlet</label><select class="select" id="euOutlet"></select></div>
+      <div class="field">
+        <label>Reset password (optional)</label>
+        <input class="input" type="password" id="euNewPassword" placeholder="Leave blank to keep current password">
+        <div class="hint">6+ characters. Only fill this in if you want to force a new password.</div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost btn-block" id="editUserCancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-block">Save</button>
+      </div>
+    </form>
+  </div>
+</div><script src="assets/config.js"></script>
 <script src="assets/api.js"></script>
 <script src="assets/admin.js"></script>
 </body>
