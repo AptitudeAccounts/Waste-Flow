@@ -131,17 +131,76 @@
   /* ---------- Who bar (session-aware) ---------- */
   function renderWhoBar() {
     const session = Session.get();
+    const outletSelect = $('fOutlet');
+    const lockHint = $('outletLockHint');
+
     if (session) {
       $('whoAvatar').textContent = (session.fullName || session.username || '?').charAt(0).toUpperCase();
       $('whoLabel').textContent = `${session.fullName || session.username} · ${session.role}`;
       $('whoSub').textContent = session.outlet && session.outlet !== 'All' ? `Outlet: ${session.outlet}` : 'All outlets';
-      $('signInLink').textContent = 'Dashboard →';
+      $('whoActionBtn').textContent = 'Sign out';
       $('fStaffName').value = session.fullName || session.username;
-      if (session.outlet && session.outlet !== 'All') {
-        // pre-set once outlets are loaded
-        const trySet = () => { if ($('fOutlet').querySelector(`option[value="${CSS.escape(session.outlet)}"]`)) $('fOutlet').value = session.outlet; };
+
+      if (session.outlet && session.outlet !== 'All' && session.role !== 'Admin') {
+        const trySet = () => {
+          if (outletSelect.querySelector(`option[value="${CSS.escape(session.outlet)}"]`)) {
+            outletSelect.value = session.outlet;
+            outletSelect.disabled = true;
+            lockHint.classList.remove('hidden');
+          }
+        };
         trySet(); setTimeout(trySet, 300);
+      } else {
+        outletSelect.disabled = false;
+        lockHint.classList.add('hidden');
       }
+    } else {
+      $('whoAvatar').textContent = '?';
+      $('whoLabel').textContent = 'Not signed in — enter your name below';
+      $('whoSub').textContent = 'Anyone at your outlet can submit without an account.';
+      $('whoActionBtn').textContent = 'Sign in';
+      outletSelect.disabled = false;
+      lockHint.classList.add('hidden');
+    }
+  }
+
+  function openLoginModal() {
+    $('loginModalErr').style.display = 'none';
+    $('lmUsername').value = '';
+    $('lmPassword').value = '';
+    $('loginModal').classList.add('show');
+  }
+
+  async function handleWhoAction() {
+    const session = Session.get();
+    if (session) {
+      // Signed in -> this click means "sign out"
+      WasteFlowAPI.call('logout', { token: session.token }).catch(() => {});
+      Session.clear();
+      renderWhoBar();
+      showToast('Signed out', 'success');
+    } else {
+      openLoginModal();
+    }
+  }
+
+  async function handleLoginModalSubmit(e) {
+    e.preventDefault();
+    const btn = $('loginModalSubmit');
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    $('loginModalErr').style.display = 'none';
+    try {
+      const res = await WasteFlowAPI.call('login', { username: $('lmUsername').value.trim(), password: $('lmPassword').value });
+      if (!res.ok) throw new Error(res.error || 'Invalid login');
+      Session.set(res);
+      $('loginModal').classList.remove('show');
+      renderWhoBar();
+      showToast('Signed in', 'success');
+    } catch (err) {
+      $('loginModalErr').textContent = err.message || 'Something went wrong.';
+      $('loginModalErr').style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Sign in';
     }
   }
 
@@ -286,6 +345,9 @@
     $('clearBtn').addEventListener('click', resetForm);
     $('logAnotherBtn').addEventListener('click', () => { $('successScreen').classList.remove('show'); resetForm(); });
     $('viewAdminBtn').addEventListener('click', () => window.location.href = 'admin.html');
+    $('whoActionBtn').addEventListener('click', handleWhoAction);
+    $('loginModalForm').addEventListener('submit', handleLoginModalSubmit);
+    $('loginModalCancel').addEventListener('click', () => $('loginModal').classList.remove('show'));
 
     window.addEventListener('online', () => { updateOfflineBanner(); trySyncQueue(); });
     window.addEventListener('offline', updateOfflineBanner);
