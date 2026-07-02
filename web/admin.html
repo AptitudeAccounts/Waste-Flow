@@ -1,763 +1,428 @@
-/**
- * WasteFlow admin dashboard.
- * Structure: log in -> fetch role-scoped entries + lookups once -> render
- * every page (Overview/Records/Reports/Users/Settings) from that in-memory
- * state, re-filtering client-side. Only mutations (submit/edit/delete/user
- * management) hit the network again.
- */
-(() => {
-  const $ = id => document.getElementById(id);
-  let session = null;
-  let lookups = null;
-  let allEntries = [];   // everything the backend returned for this role
-  let charts = {};       // Chart.js instances, keyed by canvas id, destroyed/recreated on re-render
-  const CHART_COLORS = ['--chart-1','--chart-2','--chart-3','--chart-4','--chart-5','--chart-6','--chart-7','--chart-8']
-    .map(v => getComputedStyle(document.documentElement).getPropertyValue(v).trim());
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WasteFlow — Dashboard</title>
+<link rel="stylesheet" href="assets/styles.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js"></script>
+<style>
+  body { display: flex; min-height: 100vh; }
 
-  const fmtMoney = n => 'AED ' + (Number(n) || 0).toLocaleString('en-AE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fmtNum = n => (Number(n) || 0).toLocaleString('en-AE', { maximumFractionDigits: 1 });
+  /* ---------- Login screen ---------- */
+  #loginScreen {
+    position: fixed; inset: 0; background: var(--bg); z-index: 200;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .login-card { width: 100%; max-width: 380px; padding: 36px 30px; text-align: center; }
+  .login-card .mark { width: 52px; height: 52px; border-radius: 14px; background: var(--moss); margin: 0 auto 18px; display:flex; align-items:center; justify-content:center; }
+  .login-card h1 { font-size: 22px; margin-bottom: 4px; }
+  .login-card p { color: var(--text-soft); font-size: 13.5px; margin-bottom: 26px; }
+  .login-card .field { text-align: left; }
+  .login-err { color: var(--clay); font-size: 13px; margin-top: 12px; display: none; }
 
-  /* =========================================================================
-     LOGIN
-  ========================================================================= */
-  async function handleLogin(e) {
-    e.preventDefault();
-    const btn = $('loginBtn');
-    btn.disabled = true; btn.textContent = 'Signing in…';
-    $('loginErr').style.display = 'none';
-    try {
-      const res = await WasteFlowAPI.call('login', { username: $('lUsername').value.trim(), password: $('lPassword').value });
-      if (!res.ok) throw new Error(res.error || 'Invalid login');
-      session = res;
-      Session.set(session);
-      await boot();
-    } catch (err) {
-      $('loginErr').textContent = err.message === 'CONFIG_MISSING'
-        ? 'The dashboard is not connected to a backend yet — set API_URL in assets/config.js.'
-        : (err.message || 'Something went wrong.');
-      $('loginErr').style.display = 'block';
-    } finally {
-      btn.disabled = false; btn.textContent = 'Sign in';
+  /* ---------- App shell ---------- */
+  #app { display: none; width: 100%; }
+  #app.show { display: flex; }
+
+  .sidebar {
+    width: 232px; flex-shrink: 0; background: var(--surface); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 20px 14px; position: sticky; top: 0; height: 100vh;
+  }
+  .sidebar .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 22px; }
+  .sidebar .brand .mark { width: 30px; height: 30px; border-radius: 8px; background: var(--moss); flex-shrink:0; }
+  .sidebar .brand span { font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+  .navlink {
+    display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: var(--radius-sm);
+    font-size: 14px; font-weight: 500; color: var(--text-soft); margin-bottom: 2px; border: none; background: none;
+    width: 100%; text-align: left;
+  }
+  .navlink:hover { background: var(--mist); color: var(--text); }
+  .navlink.active { background: var(--moss); color: #fff; }
+  .navlink .ic { width: 18px; text-align: center; }
+  .sidebar .spacer { flex: 1; }
+  .who-mini { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg); font-size: 12.5px; margin-bottom: 10px; }
+  .who-mini strong { display:block; font-size: 13.5px; }
+
+  .main { flex: 1; min-width: 0; padding: 22px 26px 60px; }
+  .page-header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; flex-wrap: wrap; }
+  .page-header h2 { font-size: 22px; }
+  .page-header .spacer { flex: 1; }
+
+  .mobile-topbar { display: none; }
+
+  @media (max-width: 880px) {
+    .sidebar { position: fixed; left: -240px; z-index: 150; transition: left 0.2s ease; box-shadow: var(--shadow-pop); }
+    .sidebar.open { left: 0; }
+    .main { padding: 14px 14px 50px; }
+    .mobile-topbar {
+      display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 60;
+      background: var(--bg); padding: 12px 14px; border-bottom: 1px solid var(--border); margin: -14px -14px 18px;
     }
+    #app { flex-direction: column; }
   }
 
-  function showLogin() {
-    $('loginScreen').style.display = 'flex';
-    $('app').classList.remove('show');
+  /* ---------- KPI grid ---------- */
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 26px; }
+  .kpi-card { padding: 18px 20px; }
+  .kpi-card .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-soft); font-weight: 600; margin-bottom: 10px; }
+  .kpi-card .value { font-family: var(--font-display); font-size: 25px; font-weight: 700; }
+  .kpi-card .sub { font-size: 12.5px; color: var(--text-soft); margin-top: 6px; }
+
+  /* ---------- Leaderboard (signature element) ---------- */
+  .leaderboard { padding: 20px 22px; margin-bottom: 26px; }
+  .leaderboard h3 { font-size: 15px; margin-bottom: 4px; }
+  .leaderboard .lb-sub { font-size: 12.5px; color: var(--text-soft); margin-bottom: 18px; }
+  .lb-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+  .lb-rank {
+    font-family: var(--font-display); font-weight: 700; font-size: 13px; color: var(--text-soft);
+    width: 22px; text-align: center; flex-shrink: 0;
+  }
+  .lb-rank.r1 { color: var(--moss); }
+  .lb-body { flex: 1; min-width: 0; }
+  .lb-top { display: flex; justify-content: space-between; font-size: 13.5px; margin-bottom: 5px; }
+  .lb-top .name { font-weight: 600; }
+  .lb-top .val { font-family: var(--font-mono); color: var(--text-soft); }
+  .lb-bar-track { height: 8px; border-radius: 5px; background: var(--mist); overflow: hidden; }
+  .lb-bar-fill { height: 100%; border-radius: 5px; background: var(--moss); transition: width 0.6s ease; }
+
+  /* ---------- Charts ---------- */
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 26px; }
+  .chart-card { padding: 18px 20px; }
+  .chart-card h3 { font-size: 14.5px; margin-bottom: 14px; }
+  .chart-card .chart-wrap { position: relative; height: 240px; }
+
+  /* ---------- Filters ---------- */
+  .filter-bar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; align-items: flex-end; }
+  .filter-bar .field { margin-bottom: 0; min-width: 140px; flex: 1; }
+  .filter-bar .field label { margin-bottom: 5px; }
+  .filter-bar .input, .filter-bar .select { padding: 10px 12px; font-size: 14px; }
+  .filter-actions { display: flex; gap: 8px; }
+
+  /* ---------- Tables ---------- */
+  .table-card { padding: 0; overflow: hidden; margin-bottom: 24px; }
+  .table-card-head { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .table-card-head h3 { font-size: 15px; }
+  .table-scroll { overflow-x: auto; max-height: 520px; }
+  table.data-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.data-table th {
+    position: sticky; top: 0; background: var(--surface); text-align: left; padding: 11px 14px;
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft);
+    border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; user-select: none;
+  }
+  table.data-table th:hover { color: var(--text); }
+  table.data-table td { padding: 11px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  table.data-table td.wrap-cell { white-space: normal; max-width: 220px; }
+  table.data-table tbody tr:hover { background: var(--mist); }
+  table.data-table .num { font-family: var(--font-mono); text-align: right; }
+  .table-pager { display: flex; align-items: center; gap: 10px; padding: 12px 18px; font-size: 13px; color: var(--text-soft); }
+  .table-empty { padding: 40px; text-align: center; color: var(--text-soft); }
+
+  .search-mini { padding: 9px 12px; font-size: 13.5px; width: 220px; }
+
+  /* ---------- Reports ---------- */
+  .report-controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+  #reportOutput { padding: 30px; }
+  .report-head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid var(--ink); padding-bottom: 16px; margin-bottom: 20px; }
+  .report-head h2 { font-size: 20px; }
+  .report-head .meta { text-align: right; font-size: 12.5px; color: var(--text-soft); }
+  .report-kpis { display: flex; gap: 26px; margin-bottom: 22px; flex-wrap: wrap; }
+  .report-kpis div strong { display:block; font-family: var(--font-display); font-size: 19px; }
+  .report-kpis div span { font-size: 11.5px; color: var(--text-soft); text-transform: uppercase; }
+
+  @media print {
+    .sidebar, .mobile-topbar, .report-controls, .no-print { display: none !important; }
+    .main { padding: 0; }
+    #app { display: block !important; }
+    body { background: #fff; color: #000; }
   }
 
-  function logout() {
-    if (session) WasteFlowAPI.call('logout', { token: session.token }).catch(() => {});
-    Session.clear();
-    session = null;
-    showLogin();
+  /* Row actions + anomaly highlight */
+  .row-actions { display: flex; gap: 6px; }
+  .row-actions button { padding: 5px 10px; font-size: 12px; border-radius: 6px; }
+  tr.anomaly td:first-child { box-shadow: inset 3px 0 0 var(--clay); }
+  .tag { display:inline-flex; align-items:center; gap:8px; padding:6px 12px; border-radius:999px; background:var(--mist); font-size:13px; }
+  .tag button { background:none; border:none; color:var(--text-soft); font-size:14px; line-height:1; }
+
+  /* Modal */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(22,33,28,0.5); z-index: 300;
+    display: none; align-items: center; justify-content: center; padding: 20px;
   }
+  .modal-overlay.show { display: flex; }
+  .modal-box { width: 100%; max-width: 420px; padding: 24px; max-height: 90vh; overflow-y: auto; }
+  .modal-box h3 { margin-bottom: 18px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 6px; }
 
-  /* =========================================================================
-     BOOT — after successful login (or restored session)
-  ========================================================================= */
-  async function boot() {
-    $('loginScreen').style.display = 'none';
-    $('app').classList.add('show');
-    $('sideWhoName').textContent = session.fullName || session.username;
-    $('sideWhoRole').textContent = session.role + (session.outlet && session.outlet !== 'All' ? ' · ' + session.outlet : '');
+  /* Settings */
+  .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px,1fr)); gap: 18px; }
+  .lookup-manage { padding: 18px; }
+  .lookup-manage h4 { font-size: 14px; margin-bottom: 12px; }
+  .tag-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
 
-    const isAdmin = session.role === 'Admin';
-    $('navUsers').style.display = isAdmin ? '' : 'none';
-    $('navSettings').style.display = isAdmin ? '' : 'none';
+<div id="loginScreen">
+  <div class="card login-card">
+    <div class="mark"><svg width="26" height="26" viewBox="0 0 34 34" fill="none"><path d="M9 12h16M9 17h16M9 22h10" stroke="#F6F4EE" stroke-width="2.4" stroke-linecap="round"/></svg></div>
+    <h1>WasteFlow Dashboard</h1>
+    <p>Sign in to view outlet waste reports</p>
+    <form id="loginForm">
+      <div class="field">
+        <label>Username</label>
+        <input class="input" id="lUsername" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input class="input" id="lPassword" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" type="submit" id="loginBtn">Sign in</button>
+      <div class="login-err" id="loginErr"></div>
+    </form>
+    <p style="margin-top:20px; font-size:12.5px;">Just here to log waste? <a href="index.html">Open the staff form →</a></p>
+  </div>
+</div>
 
-    const [lookupsRes, entriesRes] = await Promise.all([
-      WasteFlowAPI.call('lookups', {}),
-      WasteFlowAPI.call('entries', { token: session.token, filters: {} })
-    ]);
+<div id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><div class="mark"></div><span>WasteFlow</span></div>
+    <div class="who-mini"><strong id="sideWhoName">—</strong><span id="sideWhoRole" class="text-soft"></span></div>
+    <button class="navlink active" data-page="overview"><span class="ic">▦</span> Overview</button>
+    <button class="navlink" data-page="records"><span class="ic">☰</span> Records</button>
+    <button class="navlink" data-page="reports"><span class="ic">▤</span> Reports</button>
+    <button class="navlink" data-page="users" id="navUsers"><span class="ic">◍</span> Users</button>
+    <button class="navlink" data-page="settings" id="navSettings"><span class="ic">⚙</span> Settings</button>
+    <div class="spacer"></div>
+    <button class="navlink" id="changePasswordBtn">🔑 Change password</button>
+    <button class="navlink" id="themeToggle">🌙 Dark mode</button>
+    <button class="navlink" id="logoutBtn">↩ Sign out</button>
+  </aside>
 
-    if (!entriesRes.ok) { showToast(entriesRes.error || 'Session expired', 'error'); logout(); return; }
-    lookups = lookupsRes;
-    allEntries = entriesRes.entries.map(e => ({ ...e, Quantity: Number(e.Quantity) || 0, EstimatedCost: Number(e.EstimatedCost) || 0 }));
+  <div style="flex:1; min-width:0; display:flex; flex-direction:column;">
+    <div class="mobile-topbar">
+      <button class="icon-btn" id="menuToggle" aria-label="Menu">☰</button>
+      <strong style="font-family:var(--font-display)">WasteFlow</strong>
+    </div>
+    <main class="main">
 
-    if (lookups.settings && lookups.settings.CompanyName) {
-      document.title = `${lookups.settings.CompanyName} — WasteFlow`;
-    }
-    if (WASTEFLOW_CONFIG.SHEET_URL && WASTEFLOW_CONFIG.SHEET_URL.indexOf('PASTE_YOUR') !== 0) {
-      $('openSheetLink').href = WASTEFLOW_CONFIG.SHEET_URL;
-    }
-
-    buildFilterBar('overviewFilters', renderOverview);
-    buildFilterBar('recordsFilters', renderRecords);
-    populateReportSelectors();
-
-    renderOverview();
-    renderRecords();
-    if (isAdmin) { renderUsers(); renderSettingsLookups(); }
-  }
-
-  /* =========================================================================
-     FILTER BAR (shared component, used on Overview + Records)
-  ========================================================================= */
-  const filterState = {}; // { barId: {dateFrom,dateTo,outlet,department,category,item,staff} }
-
-  function buildFilterBar(containerId, onApply) {
-    const el = $(containerId);
-    filterState[containerId] = {};
-    const staffNames = Array.from(new Set(allEntries.map(e => e.StaffName))).filter(Boolean).sort();
-
-    el.innerHTML = `
-      <div class="field"><label>From</label><input class="input" type="date" data-f="dateFrom"></div>
-      <div class="field"><label>To</label><input class="input" type="date" data-f="dateTo"></div>
-      <div class="field"><label>Outlet</label><select class="select" data-f="outlet"><option value="">All outlets</option>${opts(lookups.outlets)}</select></div>
-      <div class="field"><label>Department</label><select class="select" data-f="department"><option value="">All departments</option>${opts(lookups.departments)}</select></div>
-      <div class="field"><label>Category</label><select class="select" data-f="category"><option value="">All categories</option>${opts(lookups.categories)}</select></div>
-      <div class="field"><label>Staff</label><select class="select" data-f="staff"><option value="">All staff</option>${opts(staffNames)}</select></div>
-      <div class="filter-actions"><button class="btn btn-ghost" data-clear>Clear</button></div>
-    `;
-    el.querySelectorAll('[data-f]').forEach(input => {
-      input.addEventListener('change', () => {
-        filterState[containerId][input.dataset.f] = input.value;
-        onApply();
-      });
-    });
-    el.querySelector('[data-clear]').addEventListener('click', () => {
-      el.querySelectorAll('[data-f]').forEach(i => i.value = '');
-      filterState[containerId] = {};
-      onApply();
-    });
-  }
-
-  function opts(arr) { return arr.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join(''); }
-  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-
-  function applyFilters(entries, f) {
-    return entries.filter(e =>
-      (!f.dateFrom || String(e.Date) >= f.dateFrom) &&
-      (!f.dateTo || String(e.Date) <= f.dateTo) &&
-      (!f.outlet || e.Outlet === f.outlet) &&
-      (!f.department || e.Department === f.department) &&
-      (!f.category || e.Category === f.category) &&
-      (!f.staff || e.StaffName === f.staff)
-    );
-  }
-
-  /* =========================================================================
-     OVERVIEW: KPIs, leaderboard, charts, insights
-  ========================================================================= */
-  function renderOverview() {
-    const entries = applyFilters(allEntries, filterState.overviewFilters || {});
-    renderKpis(entries);
-    renderLeaderboard(entries);
-    renderCharts(entries);
-    renderInsights(entries);
-  }
-
-  function renderKpis(entries) {
-    const totalCost = entries.reduce((s, e) => s + e.EstimatedCost, 0);
-    const totalQty = entries.reduce((s, e) => s + e.Quantity, 0);
-    const byOutlet = groupSum(entries, 'Outlet', 'EstimatedCost');
-    const byItem = groupSum(entries, 'ItemName', 'EstimatedCost');
-    const byCat = groupSum(entries, 'Category', 'EstimatedCost');
-    const topOutlet = topKey(byOutlet), topItem = topKey(byItem), topCat = topKey(byCat);
-
-    const cards = [
-      ['Total waste cost', fmtMoney(totalCost), entries.length + ' entries'],
-      ['Total waste quantity', fmtNum(totalQty) + ' units', 'mixed Kg / Pieces / Liters'],
-      ['Number of entries', entries.length.toLocaleString(), 'in selected range'],
-      ['Highest waste outlet', topOutlet || '—', topOutlet ? fmtMoney(byOutlet[topOutlet]) : ''],
-      ['Highest waste item', topItem || '—', topItem ? fmtMoney(byItem[topItem]) : ''],
-      ['Highest waste category', topCat || '—', topCat ? fmtMoney(byCat[topCat]) : '']
-    ];
-    $('kpiGrid').innerHTML = cards.map(([label, value, sub]) => `
-      <div class="card kpi-card"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>
-    `).join('');
-  }
-
-  function groupSum(entries, key, valueKey) {
-    const out = {};
-    entries.forEach(e => { out[e[key]] = (out[e[key]] || 0) + e[valueKey]; });
-    return out;
-  }
-  function groupCount(entries, key) {
-    const out = {};
-    entries.forEach(e => { out[e[key]] = (out[e[key]] || 0) + 1; });
-    return out;
-  }
-  function topKey(obj) {
-    const keys = Object.keys(obj);
-    if (keys.length === 0) return null;
-    return keys.reduce((a, b) => obj[a] >= obj[b] ? a : b);
-  }
-
-  function renderLeaderboard(entries) {
-    const byOutlet = groupSum(entries, 'Outlet', 'EstimatedCost');
-    const ranked = Object.keys(byOutlet).sort((a, b) => byOutlet[b] - byOutlet[a]);
-    const max = ranked.length ? byOutlet[ranked[0]] : 0;
-    if (ranked.length === 0) { $('leaderboardBody').innerHTML = '<p class="text-soft">No data for this selection.</p>'; return; }
-    $('leaderboardBody').innerHTML = ranked.map((o, i) => `
-      <div class="lb-row">
-        <div class="lb-rank ${i === 0 ? 'r1' : ''}">${String(i + 1).padStart(2, '0')}</div>
-        <div class="lb-body">
-          <div class="lb-top"><span class="name">${escapeHtml(o)}</span><span class="val">${fmtMoney(byOutlet[o])}</span></div>
-          <div class="lb-bar-track"><div class="lb-bar-fill" style="width:${max ? (byOutlet[o] / max * 100) : 0}%"></div></div>
+      <!-- OVERVIEW -->
+      <section id="page-overview" class="page">
+        <div class="page-header">
+          <h2>Overview</h2>
+          <div class="spacer"></div>
         </div>
+        <div class="filter-bar" id="overviewFilters"></div>
+        <div class="kpi-grid" id="kpiGrid"></div>
+        <div class="card leaderboard">
+          <h3>Outlet ranking</h3>
+          <div class="lb-sub">Ranked by total waste cost for the selected filters — lower is better.</div>
+          <div id="leaderboardBody"></div>
+        </div>
+        <div class="chart-grid">
+          <div class="card chart-card"><h3>Waste cost by outlet</h3><div class="chart-wrap"><canvas id="chartOutletCost"></canvas></div></div>
+          <div class="card chart-card"><h3>Waste by category</h3><div class="chart-wrap"><canvas id="chartCategoryPie"></canvas></div></div>
+          <div class="card chart-card"><h3>Daily waste trend</h3><div class="chart-wrap"><canvas id="chartDailyTrend"></canvas></div></div>
+          <div class="card chart-card"><h3>Monthly waste trend</h3><div class="chart-wrap"><canvas id="chartMonthlyTrend"></canvas></div></div>
+          <div class="card chart-card"><h3>Top 10 waste items (cost)</h3><div class="chart-wrap"><canvas id="chartTopItems"></canvas></div></div>
+          <div class="card chart-card"><h3>Department comparison</h3><div class="chart-wrap"><canvas id="chartDeptComparison"></canvas></div></div>
+          <div class="card chart-card"><h3>Waste by category (cost)</h3><div class="chart-wrap"><canvas id="chartCategoryBar"></canvas></div></div>
+          <div class="card chart-card"><h3>Quantity vs. cost</h3><div class="chart-wrap"><canvas id="chartQtyVsCost"></canvas></div></div>
+        </div>
+        <div class="card" id="insightsCard" style="padding:18px 20px; margin-bottom:26px;">
+          <h3 style="font-size:14.5px; margin-bottom:10px;">Insights</h3>
+          <div id="insightsBody" class="text-soft" style="font-size:13.5px; line-height:1.7;"></div>
+        </div>
+      </section>
+
+      <!-- RECORDS -->
+      <section id="page-records" class="page hidden">
+        <div class="page-header">
+          <h2>All records</h2>
+          <div class="spacer"></div>
+          <div class="filter-actions no-print">
+            <button class="btn btn-ghost" id="exportCsv">Export CSV</button>
+            <button class="btn btn-ghost" id="exportXlsx">Export Excel</button>
+            <button class="btn btn-ghost" id="exportPdf">Export PDF</button>
+          </div>
+        </div>
+        <div class="filter-bar" id="recordsFilters"></div>
+
+        <div class="card table-card">
+          <div class="table-card-head">
+            <h3>Waste log</h3>
+            <div class="spacer"></div>
+            <input class="input search-mini" id="recordsSearch" placeholder="Search records…">
+          </div>
+          <div class="table-scroll"><table class="data-table" id="recordsTable"><thead></thead><tbody></tbody></table></div>
+          <div class="table-pager" id="recordsPager"></div>
+        </div>
+
+        <div class="chart-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="card table-card">
+            <div class="table-card-head"><h3>Highest cost items</h3></div>
+            <div class="table-scroll"><table class="data-table" id="highCostTable"><thead></thead><tbody></tbody></table></div>
+          </div>
+          <div class="card table-card">
+            <div class="table-card-head"><h3>Most frequent waste items</h3></div>
+            <div class="table-scroll"><table class="data-table" id="freqItemsTable"><thead></thead><tbody></tbody></table></div>
+          </div>
+          <div class="card table-card">
+            <div class="table-card-head"><h3>Outlet performance</h3></div>
+            <div class="table-scroll"><table class="data-table" id="outletPerfTable"><thead></thead><tbody></tbody></table></div>
+          </div>
+          <div class="card table-card">
+            <div class="table-card-head"><h3>Staff-wise entries</h3></div>
+            <div class="table-scroll"><table class="data-table" id="staffTable"><thead></thead><tbody></tbody></table></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- REPORTS -->
+      <section id="page-reports" class="page hidden">
+        <div class="page-header"><h2>Reports</h2></div>
+        <div class="report-controls">
+          <select class="select" id="reportType" style="max-width:200px;">
+            <option value="daily">Daily report</option>
+            <option value="weekly">Weekly report</option>
+            <option value="monthly">Monthly report</option>
+            <option value="outlet">Outlet report</option>
+            <option value="department">Department report</option>
+          </select>
+          <input class="input" type="date" id="reportDate" style="max-width:170px;">
+          <select class="select" id="reportOutletSel" style="max-width:180px;"></select>
+          <select class="select" id="reportDeptSel" style="max-width:180px;"></select>
+          <button class="btn btn-primary" id="generateReportBtn">Generate</button>
+          <button class="btn btn-ghost" id="printReportBtn">Print / Save PDF</button>
+        </div>
+        <div class="card" id="reportOutput"><p class="text-soft">Choose a report type and click Generate.</p></div>
+      </section>
+
+      <!-- USERS -->
+      <section id="page-users" class="page hidden">
+        <div class="page-header"><h2>Manage users</h2></div>
+        <div class="card" style="padding:20px; margin-bottom:22px; max-width:640px;">
+          <h3 style="font-size:14.5px; margin-bottom:14px;">Add a user</h3>
+          <form id="addUserForm">
+            <div class="grid-2" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="field"><label>Full name</label><input class="input" id="nuFullName" required></div>
+              <div class="field"><label>Username</label><input class="input" id="nuUsername" required></div>
+              <div class="field"><label>Password</label><input class="input" type="password" id="nuPassword" required></div>
+              <div class="field"><label>Email (for alerts)</label><input class="input" type="email" id="nuEmail"></div>
+              <div class="field">
+                <label>Role</label>
+                <select class="select" id="nuRole">
+                  <option>Admin</option><option selected>Outlet Manager</option><option>Staff</option>
+                </select>
+              </div>
+              <div class="field"><label>Outlet</label><select class="select" id="nuOutlet"></select></div>
+            </div>
+            <button class="btn btn-primary" type="submit">Add user</button>
+          </form>
+        </div>
+        <div class="card table-card">
+          <div class="table-card-head"><h3>All users</h3></div>
+          <div class="table-scroll"><table class="data-table" id="usersTable"><thead></thead><tbody></tbody></table></div>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section id="page-settings" class="page hidden">
+        <div class="page-header"><h2>Settings</h2></div>
+        <div class="settings-grid">
+          <div class="card lookup-manage">
+            <h4>Outlets</h4>
+            <div class="tag-list" id="outletTags"></div>
+            <div class="flex gap-8"><input class="input" id="newOutletInput" placeholder="New outlet name"><button class="btn btn-primary" id="addOutletBtn">Add</button></div>
+          </div>
+          <div class="card lookup-manage">
+            <h4>Departments</h4>
+            <div class="tag-list" id="deptTags"></div>
+            <div class="flex gap-8"><input class="input" id="newDeptInput" placeholder="New department name"><button class="btn btn-primary" id="addDeptBtn">Add</button></div>
+          </div>
+          <div class="card lookup-manage">
+            <h4>Waste reasons</h4>
+            <div class="tag-list" id="reasonTags"></div>
+            <div class="flex gap-8"><input class="input" id="newReasonInput" placeholder="New reason"><button class="btn btn-primary" id="addReasonBtn">Add</button></div>
+          </div>
+          <div class="card lookup-manage">
+            <h4>Alerts</h4>
+            <p class="text-soft" style="font-size:13px; margin-bottom:10px;">Configure the alert email and daily cost threshold directly in the <strong>Settings</strong> tab of your Google Sheet — this keeps credentials out of the frontend. After saving there, alerts apply immediately on the next submission.</p>
+            <a href="#" id="openSheetLink" target="_blank" class="btn btn-ghost">Open Google Sheet</a>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="modal-overlay" id="editModal">
+  <div class="card modal-box">
+    <h3>Edit entry</h3>
+    <form id="editForm">
+      <input type="hidden" id="editEntryId">
+      <div class="field"><label>Quantity</label><input class="input" type="number" step="0.01" id="editQuantity"></div>
+      <div class="field"><label>Estimated cost (AED)</label><input class="input" type="number" step="0.01" id="editCost"></div>
+      <div class="field"><label>Reason</label><select class="select" id="editReason"></select></div>
+      <div class="field"><label>Remarks</label><textarea class="input" id="editRemarks" rows="3"></textarea></div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost btn-block" id="editCancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-block">Save</button>
       </div>
-    `).join('');
-  }
+    </form>
+  </div>
+</div>
 
-  function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
-
-  function renderCharts(entries) {
-    const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text').trim();
-    const gridColor = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
-    Chart.defaults.color = textColor;
-    Chart.defaults.font.family = "'IBM Plex Sans', sans-serif";
-    Chart.defaults.borderColor = gridColor;
-
-    // Waste cost by outlet
-    const byOutlet = groupSum(entries, 'Outlet', 'EstimatedCost');
-    makeBar('chartOutletCost', Object.keys(byOutlet), [Object.values(byOutlet)], ['Cost (AED)']);
-
-    // Category pie
-    const byCat = groupSum(entries, 'Category', 'EstimatedCost');
-    makePie('chartCategoryPie', Object.keys(byCat), Object.values(byCat));
-
-    // Category bar (same data, bar view for exact comparison)
-    makeBar('chartCategoryBar', Object.keys(byCat), [Object.values(byCat)], ['Cost (AED)'], true);
-
-    // Daily trend
-    const byDate = groupSum(entries, 'Date', 'EstimatedCost');
-    const sortedDates = Object.keys(byDate).sort();
-    makeLine('chartDailyTrend', sortedDates, sortedDates.map(d => byDate[d]), 'Cost (AED)');
-
-    // Monthly trend
-    const byMonth = {};
-    entries.forEach(e => { const m = String(e.Date).slice(0, 7); byMonth[m] = (byMonth[m] || 0) + e.EstimatedCost; });
-    const sortedMonths = Object.keys(byMonth).sort();
-    makeBar('chartMonthlyTrend', sortedMonths, [sortedMonths.map(m => byMonth[m])], ['Cost (AED)']);
-
-    // Top 10 items by cost
-    const byItem = groupSum(entries, 'ItemName', 'EstimatedCost');
-    const topItems = Object.keys(byItem).sort((a, b) => byItem[b] - byItem[a]).slice(0, 10);
-    makeBar('chartTopItems', topItems, [topItems.map(i => byItem[i])], ['Cost (AED)'], true);
-
-    // Department comparison
-    const byDept = groupSum(entries, 'Department', 'EstimatedCost');
-    makeBar('chartDeptComparison', Object.keys(byDept), [Object.values(byDept)], ['Cost (AED)']);
-
-    // Quantity vs cost scatter
-    destroyChart('chartQtyVsCost');
-    charts.chartQtyVsCost = new Chart($('chartQtyVsCost'), {
-      type: 'scatter',
-      data: { datasets: [{ label: 'Entries', data: entries.map(e => ({ x: e.Quantity, y: e.EstimatedCost })), backgroundColor: CHART_COLORS[0] }] },
-      options: baseOpts({ x: { title: { display: true, text: 'Quantity' } }, y: { title: { display: true, text: 'Cost (AED)' } } })
-    });
-  }
-
-  function baseOpts(scalesExtra) {
-    return {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: Object.assign({ x: { grid: { display: false } }, y: { beginAtZero: true } }, scalesExtra || {})
-    };
-  }
-
-  function makeBar(id, labels, datasets, dsLabels, horizontal) {
-    destroyChart(id);
-    charts[id] = new Chart($(id), {
-      type: 'bar',
-      data: { labels, datasets: datasets.map((d, i) => ({ label: dsLabels[i], data: d, backgroundColor: CHART_COLORS[i % CHART_COLORS.length], borderRadius: 5 })) },
-      options: Object.assign(baseOpts(), horizontal ? { indexAxis: 'y' } : {})
-    });
-  }
-
-  function makeLine(id, labels, data, label) {
-    destroyChart(id);
-    charts[id] = new Chart($(id), {
-      type: 'line',
-      data: { labels, datasets: [{ label, data, borderColor: CHART_COLORS[0], backgroundColor: CHART_COLORS[0] + '33', fill: true, tension: 0.3 }] },
-      options: baseOpts()
-    });
-  }
-
-  function makePie(id, labels, data) {
-    destroyChart(id);
-    charts[id] = new Chart($(id), {
-      type: 'doughnut',
-      data: { labels, datasets: [{ data, backgroundColor: CHART_COLORS }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
-    });
-  }
-
-  /** Lightweight anomaly detection: flag items priced far above their category's norm. */
-  function findAnomalies(entries) {
-    const byCat = {};
-    entries.forEach(e => { (byCat[e.Category] = byCat[e.Category] || []).push(e.EstimatedCost); });
-    const stats = {};
-    Object.keys(byCat).forEach(c => {
-      const vals = byCat[c];
-      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-      const variance = vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length;
-      stats[c] = { mean, sd: Math.sqrt(variance) };
-    });
-    return entries.filter(e => {
-      const s = stats[e.Category];
-      return s && s.sd > 0 && e.EstimatedCost > s.mean + 2 * s.sd && e.EstimatedCost > 50;
-    });
-  }
-
-  function renderInsights(entries) {
-    if (entries.length === 0) { $('insightsBody').innerHTML = 'No data for this selection yet.'; return; }
-    const anomalies = findAnomalies(entries);
-    const byOutlet = groupSum(entries, 'Outlet', 'EstimatedCost');
-    const ranked = Object.keys(byOutlet).sort((a, b) => byOutlet[b] - byOutlet[a]);
-
-    // Week-over-week trend if enough date spread exists
-    const dates = entries.map(e => e.Date).sort();
-    let trendLine = '';
-    if (dates.length > 1) {
-      const mid = new Date((new Date(dates[0]).getTime() + new Date(dates[dates.length - 1]).getTime()) / 2);
-      const midStr = mid.toISOString().slice(0, 10);
-      const firstHalf = entries.filter(e => e.Date < midStr).reduce((s, e) => s + e.EstimatedCost, 0);
-      const secondHalf = entries.filter(e => e.Date >= midStr).reduce((s, e) => s + e.EstimatedCost, 0);
-      if (firstHalf > 0) {
-        const pct = ((secondHalf - firstHalf) / firstHalf * 100).toFixed(0);
-        trendLine = `<p>Waste cost in the second half of the selected period is <strong>${pct > 0 ? '+' : ''}${pct}%</strong> vs. the first half.</p>`;
-      }
-    }
-
-    let html = '';
-    if (ranked.length) html += `<p><strong>${escapeHtml(ranked[0])}</strong> is currently the highest-cost outlet at ${fmtMoney(byOutlet[ranked[0]])}.</p>`;
-    html += trendLine;
-    if (anomalies.length) {
-      html += `<p><strong>${anomalies.length} unusual entr${anomalies.length === 1 ? 'y' : 'ies'}</strong> flagged — cost well above the typical range for their category. See the highlighted rows on the Records page.</p>`;
-    } else {
-      html += `<p>No unusually high-cost entries detected in this selection.</p>`;
-    }
-    $('insightsBody').innerHTML = html;
-  }
-
-  /* =========================================================================
-     RECORDS PAGE: sortable / searchable / paginated table + secondary tables
-  ========================================================================= */
-  const recordsState = { sortKey: 'Date', sortDir: 'desc', page: 1, pageSize: 25, search: '' };
-
-  function currentRecordsEntries() {
-    let entries = applyFilters(allEntries, filterState.recordsFilters || {});
-    if (recordsState.search) {
-      const q = recordsState.search.toLowerCase();
-      entries = entries.filter(e => [e.ItemName, e.StaffName, e.Outlet, e.Remarks, e.Reason].join(' ').toLowerCase().includes(q));
-    }
-    entries = [...entries].sort((a, b) => {
-      const va = a[recordsState.sortKey], vb = b[recordsState.sortKey];
-      const cmp = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb));
-      return recordsState.sortDir === 'asc' ? cmp : -cmp;
-    });
-    return entries;
-  }
-
-  const RECORD_COLUMNS = [
-    ['Date', 'Date'], ['Outlet', 'Outlet'], ['Department', 'Department'], ['Category', 'Category'],
-    ['ItemName', 'Item'], ['Quantity', 'Qty'], ['Unit', 'Unit'], ['EstimatedCost', 'Cost (AED)'],
-    ['Reason', 'Reason'], ['StaffName', 'Staff'], ['Remarks', 'Remarks']
-  ];
-
-  function renderRecords() {
-    renderMainTable();
-    const entries = applyFilters(allEntries, filterState.recordsFilters || {});
-    renderHighCostTable(entries);
-    renderFreqItemsTable(entries);
-    renderOutletPerfTable(entries);
-    renderStaffTable(entries);
-  }
-
-  function canEdit(entry) {
-    if (session.role === 'Admin') return true;
-    if (session.role === 'Outlet Manager') {
-      const today = new Date().toISOString().slice(0, 10);
-      return entry.Outlet === session.outlet && String(entry.Date) === today;
-    }
-    return false;
-  }
-
-  function renderMainTable() {
-    const all = currentRecordsEntries();
-    const anomalies = new Set(findAnomalies(all).map(e => e.EntryID));
-    const totalPages = Math.max(1, Math.ceil(all.length / recordsState.pageSize));
-    recordsState.page = Math.min(recordsState.page, totalPages);
-    const pageEntries = all.slice((recordsState.page - 1) * recordsState.pageSize, recordsState.page * recordsState.pageSize);
-
-    const thead = $('recordsTable').querySelector('thead');
-    thead.innerHTML = '<tr>' + RECORD_COLUMNS.map(([key, label]) =>
-      `<th data-sort="${key}">${label}${recordsState.sortKey === key ? (recordsState.sortDir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`
-    ).join('') + '<th>Actions</th></tr>';
-    thead.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
-      const key = th.dataset.sort;
-      if (recordsState.sortKey === key) recordsState.sortDir = recordsState.sortDir === 'asc' ? 'desc' : 'asc';
-      else { recordsState.sortKey = key; recordsState.sortDir = 'asc'; }
-      renderMainTable();
-    }));
-
-    const tbody = $('recordsTable').querySelector('tbody');
-    if (pageEntries.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="${RECORD_COLUMNS.length + 1}" class="table-empty">No records match your filters.</td></tr>`;
-    } else {
-      tbody.innerHTML = pageEntries.map(e => `
-        <tr class="${anomalies.has(e.EntryID) ? 'anomaly' : ''}">
-          <td>${e.Date}</td><td>${escapeHtml(e.Outlet)}</td><td>${escapeHtml(e.Department)}</td>
-          <td>${escapeHtml(e.Category)}</td><td class="wrap-cell">${escapeHtml(e.ItemName)}</td>
-          <td class="num">${fmtNum(e.Quantity)}</td><td>${escapeHtml(e.Unit)}</td>
-          <td class="num">${fmtMoney(e.EstimatedCost)}</td><td>${escapeHtml(e.Reason)}</td>
-          <td>${escapeHtml(e.StaffName)}</td><td class="wrap-cell">${escapeHtml(e.Remarks || '')}</td>
-          <td class="row-actions">${canEdit(e) ? `<button class="btn btn-ghost" data-edit="${e.EntryID}">Edit</button><button class="btn btn-danger" data-del="${e.EntryID}">Del</button>` : ''}</td>
-        </tr>
-      `).join('');
-      tbody.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => openEditModal(b.dataset.edit)));
-      tbody.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => deleteEntry(b.dataset.del)));
-    }
-
-    $('recordsPager').innerHTML = `
-      <span>${all.length} record${all.length === 1 ? '' : 's'}</span><div class="spacer"></div>
-      <button class="btn btn-ghost" ${recordsState.page <= 1 ? 'disabled' : ''} id="pagerPrev">← Prev</button>
-      <span>Page ${recordsState.page} of ${totalPages}</span>
-      <button class="btn btn-ghost" ${recordsState.page >= totalPages ? 'disabled' : ''} id="pagerNext">Next →</button>
-    `;
-    const prev = $('pagerPrev'), next = $('pagerNext');
-    if (prev) prev.addEventListener('click', () => { recordsState.page--; renderMainTable(); });
-    if (next) next.addEventListener('click', () => { recordsState.page++; renderMainTable(); });
-  }
-
-  function simpleTable(elId, headers, rows) {
-    const el = $(elId);
-    el.querySelector('thead').innerHTML = '<tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr>';
-    el.querySelector('tbody').innerHTML = rows.length
-      ? rows.map(r => '<tr>' + r.map((c, i) => `<td class="${i > 0 ? 'num' : ''}">${c}</td>`).join('') + '</tr>').join('')
-      : `<tr><td colspan="${headers.length}" class="table-empty">No data.</td></tr>`;
-  }
-
-  function renderHighCostTable(entries) {
-    const rows = [...entries].sort((a, b) => b.EstimatedCost - a.EstimatedCost).slice(0, 10)
-      .map(e => [escapeHtml(e.ItemName), fmtMoney(e.EstimatedCost), escapeHtml(e.Outlet), e.Date]);
-    simpleTable('highCostTable', ['Item', 'Cost', 'Outlet', 'Date'], rows);
-  }
-
-  function renderFreqItemsTable(entries) {
-    const counts = groupCount(entries, 'ItemName');
-    const rows = Object.keys(counts).sort((a, b) => counts[b] - counts[a]).slice(0, 10)
-      .map(item => [escapeHtml(item), counts[item], fmtMoney(entries.filter(e => e.ItemName === item).reduce((s, e) => s + e.EstimatedCost, 0))]);
-    simpleTable('freqItemsTable', ['Item', 'Times logged', 'Total cost'], rows);
-  }
-
-  function renderOutletPerfTable(entries) {
-    const outlets = Array.from(new Set(entries.map(e => e.Outlet)));
-    const rows = outlets.map(o => {
-      const sub = entries.filter(e => e.Outlet === o);
-      const cost = sub.reduce((s, e) => s + e.EstimatedCost, 0);
-      return [escapeHtml(o), sub.length, fmtMoney(cost), fmtMoney(sub.length ? cost / sub.length : 0)];
-    }).sort((a, b) => parseFloat(b[2].replace(/[^\d.]/g, '')) - parseFloat(a[2].replace(/[^\d.]/g, '')));
-    simpleTable('outletPerfTable', ['Outlet', 'Entries', 'Total cost', 'Avg / entry'], rows);
-  }
-
-  function renderStaffTable(entries) {
-    const staff = Array.from(new Set(entries.map(e => e.StaffName))).filter(Boolean);
-    const rows = staff.map(s => {
-      const sub = entries.filter(e => e.StaffName === s);
-      return [escapeHtml(s), sub.length, fmtMoney(sub.reduce((a, e) => a + e.EstimatedCost, 0))];
-    }).sort((a, b) => b[1] - a[1]);
-    simpleTable('staffTable', ['Staff', 'Entries', 'Total cost'], rows);
-  }
-
-  /* ---------- Edit / delete ---------- */
-  function openEditModal(entryId) {
-    const entry = allEntries.find(e => e.EntryID === entryId);
-    if (!entry) return;
-    $('editEntryId').value = entryId;
-    $('editQuantity').value = entry.Quantity;
-    $('editCost').value = entry.EstimatedCost;
-    $('editReason').innerHTML = opts(lookups.reasons);
-    $('editReason').value = entry.Reason;
-    $('editRemarks').value = entry.Remarks || '';
-    $('editModal').classList.add('show');
-  }
-
-  async function saveEdit(e) {
-    e.preventDefault();
-    const entryId = $('editEntryId').value;
-    const res = await WasteFlowAPI.call('updateEntry', {
-      token: session.token, entryId,
-      quantity: Number($('editQuantity').value), estimatedCost: Number($('editCost').value),
-      reason: $('editReason').value, remarks: $('editRemarks').value
-    });
-    if (!res.ok) { showToast(res.error || 'Could not save changes', 'error'); return; }
-    const entry = allEntries.find(x => x.EntryID === entryId);
-    Object.assign(entry, { Quantity: Number($('editQuantity').value), EstimatedCost: Number($('editCost').value), Reason: $('editReason').value, Remarks: $('editRemarks').value });
-    $('editModal').classList.remove('show');
-    showToast('Entry updated', 'success');
-    renderRecords(); renderOverview();
-  }
-
-  async function deleteEntry(entryId) {
-    if (!confirm('Delete this entry? This cannot be undone from the dashboard.')) return;
-    const res = await WasteFlowAPI.call('deleteEntry', { token: session.token, entryId });
-    if (!res.ok) { showToast(res.error || 'Could not delete entry', 'error'); return; }
-    allEntries = allEntries.filter(e => e.EntryID !== entryId);
-    showToast('Entry deleted', 'success');
-    renderRecords(); renderOverview();
-  }
-
-  /* ---------- Export ---------- */
-  function exportRows() {
-    return currentRecordsEntries().map(e => ({
-      Date: e.Date, Outlet: e.Outlet, Department: e.Department, Category: e.Category, Item: e.ItemName,
-      Quantity: e.Quantity, Unit: e.Unit, 'Cost (AED)': e.EstimatedCost, Reason: e.Reason, Staff: e.StaffName, Remarks: e.Remarks || ''
-    }));
-  }
-
-  function exportCsv() {
-    const rows = exportRows();
-    if (!rows.length) return showToast('Nothing to export', 'error');
-    const headers = Object.keys(rows[0]);
-    const csv = [headers.join(',')].concat(rows.map(r => headers.map(h => `"${String(r[h]).replace(/"/g, '""')}"`).join(','))).join('\n');
-    downloadBlob(csv, 'wasteflow-records.csv', 'text/csv');
-  }
-
-  function exportXlsx() {
-    const rows = exportRows();
-    if (!rows.length) return showToast('Nothing to export', 'error');
-    const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'WasteLog');
-    XLSX.writeFile(wb, 'wasteflow-records.xlsx');
-  }
-
-  function exportPdf() {
-    const rows = exportRows();
-    if (!rows.length) return showToast('Nothing to export', 'error');
-    const doc = new jspdf.jsPDF({ orientation: 'landscape' });
-    doc.setFontSize(14); doc.text('WasteFlow — Waste Records', 14, 16);
-    doc.autoTable({
-      startY: 22, styles: { fontSize: 8 },
-      head: [Object.keys(rows[0])], body: rows.map(r => Object.values(r))
-    });
-    doc.save('wasteflow-records.pdf');
-  }
-
-  function downloadBlob(content, filename, mime) {
-    const blob = new Blob([content], { type: mime });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = filename; a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
-  /* =========================================================================
-     REPORTS
-  ========================================================================= */
-  function populateReportSelectors() {
-    $('reportOutletSel').innerHTML = '<option value="">All outlets</option>' + opts(lookups.outlets);
-    $('reportDeptSel').innerHTML = '<option value="">All departments</option>' + opts(lookups.departments);
-    $('reportDate').value = new Date().toISOString().slice(0, 10);
-  }
-
-  function generateReport() {
-    const type = $('reportType').value;
-    const date = $('reportDate').value;
-    const outlet = $('reportOutletSel').value;
-    const dept = $('reportDeptSel').value;
-    let from, to, title;
-    const d = new Date(date);
-
-    if (type === 'daily') { from = to = date; title = `Daily Report — ${date}`; }
-    else if (type === 'weekly') {
-      const day = d.getDay();
-      const monday = new Date(d); monday.setDate(d.getDate() - ((day + 6) % 7));
-      const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
-      from = monday.toISOString().slice(0, 10); to = sunday.toISOString().slice(0, 10);
-      title = `Weekly Report — ${from} to ${to}`;
-    } else if (type === 'monthly') {
-      from = date.slice(0, 8) + '01';
-      to = new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10);
-      title = `Monthly Report — ${date.slice(0, 7)}`;
-    } else if (type === 'outlet') {
-      from = '0000-01-01'; to = '9999-12-31'; title = `Outlet Report — ${outlet || 'All outlets'}`;
-    } else {
-      from = '0000-01-01'; to = '9999-12-31'; title = `Department Report — ${dept || 'All departments'}`;
-    }
-
-    let entries = allEntries.filter(e => String(e.Date) >= from && String(e.Date) <= to);
-    if (outlet) entries = entries.filter(e => e.Outlet === outlet);
-    if (dept) entries = entries.filter(e => e.Department === dept);
-
-    const totalCost = entries.reduce((s, e) => s + e.EstimatedCost, 0);
-    const totalQty = entries.reduce((s, e) => s + e.Quantity, 0);
-    const byOutlet = groupSum(entries, 'Outlet', 'EstimatedCost');
-    const byCat = groupSum(entries, 'Category', 'EstimatedCost');
-    const topItems = Object.entries(groupSum(entries, 'ItemName', 'EstimatedCost')).sort((a, b) => b[1] - a[1]).slice(0, 10);
-
-    const company = (lookups.settings && lookups.settings.CompanyName) || WASTEFLOW_CONFIG.COMPANY_NAME;
-
-    $('reportOutput').innerHTML = `
-      <div class="report-head">
-        <div><h2>${company}</h2><div class="text-soft" style="font-size:13px;">${title}</div></div>
-        <div class="meta">Generated ${new Date().toLocaleString()}<br>By ${escapeHtml(session.fullName || session.username)}</div>
+<div class="modal-overlay" id="editUserModal">
+  <div class="card modal-box">
+    <h3>Edit user</h3>
+    <form id="editUserForm">
+      <input type="hidden" id="euUsername">
+      <div class="field"><label>Username</label><input class="input" id="euUsernameDisplay" disabled></div>
+      <div class="field"><label>Full name</label><input class="input" id="euFullName" required></div>
+      <div class="field"><label>Email</label><input class="input" type="email" id="euEmail"></div>
+      <div class="field">
+        <label>Role</label>
+        <select class="select" id="euRole"><option>Admin</option><option>Outlet Manager</option><option>Staff</option></select>
       </div>
-      <div class="report-kpis">
-        <div><strong>${fmtMoney(totalCost)}</strong><span>Total waste cost</span></div>
-        <div><strong>${fmtNum(totalQty)}</strong><span>Total quantity</span></div>
-        <div><strong>${entries.length}</strong><span>Entries</span></div>
+      <div class="field"><label>Outlet</label><select class="select" id="euOutlet"></select></div>
+      <div class="field">
+        <label>Reset password (optional)</label>
+        <input class="input" type="password" id="euNewPassword" placeholder="Leave blank to keep current password">
+        <div class="hint">6+ characters. Only fill this in if you want to force a new password.</div>
       </div>
-      <h4 style="margin-bottom:10px;">Cost by outlet</h4>
-      <table class="data-table" style="margin-bottom:22px; width:100%;"><thead><tr><th>Outlet</th><th>Cost</th></tr></thead>
-        <tbody>${Object.entries(byOutlet).sort((a,b)=>b[1]-a[1]).map(([k,v]) => `<tr><td>${escapeHtml(k)}</td><td class="num">${fmtMoney(v)}</td></tr>`).join('') || '<tr><td colspan="2" class="table-empty">No data</td></tr>'}</tbody></table>
-      <h4 style="margin-bottom:10px;">Cost by category</h4>
-      <table class="data-table" style="margin-bottom:22px; width:100%;"><thead><tr><th>Category</th><th>Cost</th></tr></thead>
-        <tbody>${Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([k,v]) => `<tr><td>${escapeHtml(k)}</td><td class="num">${fmtMoney(v)}</td></tr>`).join('') || '<tr><td colspan="2" class="table-empty">No data</td></tr>'}</tbody></table>
-      <h4 style="margin-bottom:10px;">Top 10 items</h4>
-      <table class="data-table" style="width:100%;"><thead><tr><th>Item</th><th>Cost</th></tr></thead>
-        <tbody>${topItems.map(([k,v]) => `<tr><td>${escapeHtml(k)}</td><td class="num">${fmtMoney(v)}</td></tr>`).join('') || '<tr><td colspan="2" class="table-empty">No data</td></tr>'}</tbody></table>
-    `;
-  }
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost btn-block" id="editUserCancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-block">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
 
-  /* =========================================================================
-     USERS (Admin only)
-  ========================================================================= */
-  async function renderUsers() {
-    $('nuOutlet').innerHTML = '<option value="All">All outlets</option>' + opts(lookups.outlets);
-    const res = await WasteFlowAPI.call('listUsers', { token: session.token });
-    if (!res.ok) return;
-    simpleTable('usersTable', ['Full name', 'Username', 'Role', 'Outlet', 'Email', 'Status', 'Actions'],
-      res.users.map(u => [escapeHtml(u.fullName), escapeHtml(u.username), u.role, escapeHtml(u.outlet), escapeHtml(u.email || ''),
-        `<button class="btn ${u.active === 'Yes' ? 'btn-danger' : 'btn-primary'}" data-toggle="${u.username}" data-active="${u.active}">${u.active === 'Yes' ? 'Disable' : 'Enable'}</button>`,
-        `<button class="btn btn-ghost" data-edit-user="${u.username}">Edit</button>`
-      ])
-    );
-    document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', async () => {
-      const active = b.dataset.active !== 'Yes';
-      await WasteFlowAPI.call('setUserActive', { token: session.token, username: b.dataset.toggle, active });
-      showToast('User updated', 'success');
-      renderUsers();
-    }));
-    document.querySelectorAll('[data-edit-user]').forEach(b => b.addEventListener('click', () => {
-      const u = res.users.find(x => x.username === b.dataset.editUser);
-      if (u) openEditUserModal(u);
-    }));
-  }
+<div class="modal-overlay" id="changePasswordModal">
+  <div class="card modal-box">
+    <h3>Change your password</h3>
+    <form id="changePasswordForm">
+      <div class="field"><label>Current password</label><input class="input" type="password" id="cpOld" required></div>
+      <div class="field"><label>New password</label><input class="input" type="password" id="cpNew" required></div>
+      <div class="field"><label>Confirm new password</label><input class="input" type="password" id="cpConfirm" required></div>
+      <div class="hint" style="margin-bottom:14px;">Must be at least 6 characters.</div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost btn-block" id="cpCancelBtn">Cancel</button>
+        <button type="submit" class="btn btn-primary btn-block">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
 
-  function openEditUserModal(u) {
-    $('euUsername').value = u.username;
-    $('euUsernameDisplay').value = u.username;
-    $('euFullName').value = u.fullName || '';
-    $('euEmail').value = u.email || '';
-    $('euRole').value = u.role;
-    $('euOutlet').innerHTML = '<option value="All">All outlets</option>' + opts(lookups.outlets);
-    $('euOutlet').value = u.outlet;
-    $('euNewPassword').value = '';
-    $('editUserModal').classList.add('show');
-  }
-
-  async function saveEditUser(e) {
-    e.preventDefault();
-    const res = await WasteFlowAPI.call('updateUser', {
-      token: session.token,
-      username: $('euUsername').value,
-      fullName: $('euFullName').value,
-      email: $('euEmail').value,
-      role: $('euRole').value,
-      outlet: $('euOutlet').value,
-      newPassword: $('euNewPassword').value || undefined
-    });
-    if (!res.ok) return showToast(res.error || 'Could not update user', 'error');
-    $('editUserModal').classList.remove('show');
-    showToast('User updated', 'success');
-    renderUsers();
-  }
-
-  async function addUser(e) {
-    e.preventDefault();
-    const res = await WasteFlowAPI.call('addUser', {
-      token: session.token, fullName: $('nuFullName').value, username: $('nuUsername').value,
-      password: $('nuPassword').value, email: $('nuEmail').value, role: $('nuRole').value, outlet: $('nuOutlet').value
-    });
-    if (!res.ok) return showToast(res.error || 'Could not add user', 'error');
-    showToast('User added', 'success');
-    $('addUserForm').reset();
-    renderUsers();
-  }
-
-  /* =========================================================================
-     SETTINGS (Admin only) — grow outlets/departments/reasons
-  ========================================================================= */
-  function renderSettingsLookups() {
-    $('outletTags').innerHTML = lookups.outlets.map(o => `<span class="tag">${escapeHtml(o)}</span>`).join('');
-    $('deptTags').innerHTML = lookups.departments.map(d => `<span class="tag">${escapeHtml(d)}</span>`).join('');
-    $('reasonTags').innerHTML = lookups.reasons.map(r => `<span class="tag">${escapeHtml(r)}</span>`).join('');
-  }
-
-  async function addLookup(type, inputId) {
-    const value = $(inputId).value.trim();
-    if (!value) return;
-    const res = await WasteFlowAPI.call('addLookup', { token: session.token, lookupType: type, value });
-    if (!res.ok) return showToast(res.error || 'Could not add', 'error');
-    lookups[type === 'outlet' ? 'outlets' : type === 'department' ? 'departments' : 'reasons'].push(value);
-    $(inputId).value = '';
-    renderSettingsLookups();
-    showToast('Added', 'success');
-  }
-
-  /* =========================================================================
-     NAVIGATION
-  ========================================================================= */
-  function showPage(name) {
-    document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
-    $('page-' + name).classList.remove('hidden');
-    document.querySelectorAll('.navlink[data-page]').forEach(b => b.classList.toggle('active', b.dataset.page === name));
-    $('sidebar').classList.remove('open');
-  }
-
-  /* =========================================================================
-     INIT
-  ========================================================================= */
-  async function init() {
-    document.getElementById('loginForm').addEventListener('submit', handleLogin);
-    $('logoutBtn').addEventListener('click', logout);
-    $('menuToggle').addEventListener('click', () => $('sidebar').classList.toggle('open'));
-    document.querySelectorAll('.navlink[data-page]').forEach(b => b.addEventListener('click', () => showPage(b.dataset.page)));
-
-    $('recordsSearch').addEventListener('input', e => { recordsState.search = e.target.value; recordsState.page = 1; renderMainTable(); });
-    $('exportCsv').addEventListener('click', exportCsv);
-    $('exportXlsx').addEventListener('click', exportXlsx);
-    $('exportPdf').addEventListener('click', exportPdf);
-
-    $('editForm').addEventListener('submit', saveEdit);
-    $('editCancelBtn').addEventListener('click', () => $('editModal').classList.remove('show'));
-
-    $('generateReportBtn').addEventListener('click', generateReport);
-    $('printReportBtn').addEventListener('click', () => window.print());
-
-    $('addUserForm').addEventListener('submit', addUser);
-    $('editUserForm').addEventListener('submit', saveEditUser);
-    $('editUserCancelBtn').addEventListener('click', () => $('editUserModal').classList.remove('show'));
-    $('changePasswordBtn').addEventListener('click', () => {
-      $('changePasswordForm').reset();
-      $('changePasswordModal').classList.add('show');
-    });
-    $('cpCancelBtn').addEventListener('click', () => $('changePasswordModal').classList.remove('show'));
-    $('changePasswordForm').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      if ($('cpNew').value !== $('cpConfirm').value) return showToast('New passwords do not match', 'error');
-      if ($('cpNew').value.length < 6) return showToast('New password must be at least 6 characters', 'error');
-      const res = await WasteFlowAPI.call('changePassword', { token: session.token, oldPassword: $('cpOld').value, newPassword: $('cpNew').value });
-      if (!res.ok) return showToast(res.error || 'Could not change password', 'error');
-      $('changePasswordModal').classList.remove('show');
-      showToast('Password changed', 'success');
-    });
-    $('addOutletBtn').addEventListener('click', () => addLookup('outlet', 'newOutletInput'));
-    $('addDeptBtn').addEventListener('click', () => addLookup('department', 'newDeptInput'));
-    $('addReasonBtn').addEventListener('click', () => addLookup('reason', 'newReasonInput'));
-
-    const existing = Session.get();
-    if (existing && existing.token) {
-      session = existing;
-      try { await boot(); } catch (e) { showLogin(); }
-    } else {
-      showLogin();
-    }
-  }
-
-  document.addEventListener('DOMContentLoaded', init);
-})();
+<script src="assets/config.js"></script>
+<script src="assets/api.js"></script>
+<script src="assets/admin.js"></script>
+</body>
+</html>
