@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WasteFlow</title>
+<link rel="stylesheet" href="web/assets/styles.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+  .wrap { width: 100%; max-width: 420px; text-align: center; }
+  .mark {
+    width: 60px; height: 60px; border-radius: 16px; background: var(--moss); margin: 0 auto 22px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  h1 { font-size: 26px; margin-bottom: 6px; }
+  .sub { color: var(--text-soft); font-size: 14px; margin-bottom: 34px; }
+  .link-card {
+    display: block; text-decoration: none; padding: 22px; border-radius: var(--radius-md);
+    background: var(--surface); border: 1.5px solid var(--border); margin-bottom: 14px; text-align: left;
+    transition: border-color 0.15s ease;
+  }
+  .link-card:hover { border-color: var(--moss); }
+  .link-card .icon { font-size: 22px; margin-bottom: 8px; display: block; }
+  .link-card .title { font-family: var(--font-display); font-weight: 600; font-size: 17px; color: var(--text); margin-bottom: 3px; }
+  .link-card .desc { font-size: 13px; color: var(--text-soft); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="mark">
+      <svg width="30" height="30" viewBox="0 0 34 34" fill="none"><path d="M9 12h16M9 17h16M9 22h10" stroke="#F6F4EE" stroke-width="2.4" stroke-linecap="round"/></svg>
+    </div>
+    <h1>WasteFlow</h1>
+    <div class="sub">Multi-outlet waste management system</div>
+
+    <a class="link-card" href="web/index.html">
+      <span class="icon">📱</span>
+      <div class="title">Log Waste (Staff)</div>
+      <div class="desc">Mobile submission form — no login needed for kiosk use, or sign in for branch-locked accounts.</div>
+    </a>
+
+    <a class="link-card" href="web/admin.html">
+      <span class="icon">📊</span>
+      <div class="title">Dashboard (Admin / Managers)</div>
+      <div class="desc">Reports, KPIs, records, and user management. Login required.</div>
+    </a>
+  </div>
+</body>
+</html>
