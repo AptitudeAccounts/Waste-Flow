@@ -620,6 +620,56 @@
     $('nuOutlet').innerHTML = '<option value="All">All outlets</option>' + opts(lookups.outlets);
     const res = await WasteFlowAPI.call('listUsers', { token: session.token });
     if (!res.ok) return;
+    simpleTable('usersTable', ['Full name', 'Username', 'Role', 'Outlet', 'Email', 'Status', 'Actions'],
+      res.users.map(u => [escapeHtml(u.fullName), escapeHtml(u.username), u.role, escapeHtml(u.outlet), escapeHtml(u.email || ''),
+        `<button class="btn ${u.active === 'Yes' ? 'btn-danger' : 'btn-primary'}" data-toggle="${u.username}" data-active="${u.active}">${u.active === 'Yes' ? 'Disable' : 'Enable'}</button>`,
+        `<button class="btn btn-ghost" data-edit-user="${u.username}">Edit</button>`
+      ])
+    );
+    document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', async () => {
+      const active = b.dataset.active !== 'Yes';
+      await WasteFlowAPI.call('setUserActive', { token: session.token, username: b.dataset.toggle, active });
+      showToast('User updated', 'success');
+      renderUsers();
+    }));
+    document.querySelectorAll('[data-edit-user]').forEach(b => b.addEventListener('click', () => {
+      const u = res.users.find(x => x.username === b.dataset.editUser);
+      if (u) openEditUserModal(u);
+    }));
+  }
+
+  function openEditUserModal(u) {
+    $('euUsername').value = u.username;
+    $('euUsernameDisplay').value = u.username;
+    $('euFullName').value = u.fullName || '';
+    $('euEmail').value = u.email || '';
+    $('euRole').value = u.role;
+    $('euOutlet').innerHTML = '<option value="All">All outlets</option>' + opts(lookups.outlets);
+    $('euOutlet').value = u.outlet;
+    $('euNewPassword').value = '';
+    $('editUserModal').classList.add('show');
+  }
+
+  async function saveEditUser(e) {
+    e.preventDefault();
+    const res = await WasteFlowAPI.call('updateUser', {
+      token: session.token,
+      username: $('euUsername').value,
+      fullName: $('euFullName').value,
+      email: $('euEmail').value,
+      role: $('euRole').value,
+      outlet: $('euOutlet').value,
+      newPassword: $('euNewPassword').value || undefined
+    });
+    if (!res.ok) return showToast(res.error || 'Could not update user', 'error');
+    $('editUserModal').classList.remove('show');
+    showToast('User updated', 'success');
+    renderUsers();
+  }
+  async function renderUsers() {
+    $('nuOutlet').innerHTML = '<option value="All">All outlets</option>' + opts(lookups.outlets);
+    const res = await WasteFlowAPI.call('listUsers', { token: session.token });
+    if (!res.ok) return;
     simpleTable('usersTable', ['Full name', 'Username', 'Role', 'Outlet', 'Email', 'Status'],
       res.users.map(u => [escapeHtml(u.fullName), escapeHtml(u.username), u.role, escapeHtml(u.outlet), escapeHtml(u.email || ''),
         `<button class="btn ${u.active === 'Yes' ? 'btn-danger' : 'btn-primary'}" data-toggle="${u.username}" data-active="${u.active}">${u.active === 'Yes' ? 'Disable' : 'Enable'}</button>`
@@ -696,6 +746,8 @@
     $('printReportBtn').addEventListener('click', () => window.print());
 
     $('addUserForm').addEventListener('submit', addUser);
+    $('editUserForm').addEventListener('submit', saveEditUser);
+    $('editUserCancelBtn').addEventListener('click', () => $('editUserModal').classList.remove('show'));
     $('addOutletBtn').addEventListener('click', () => addLookup('outlet', 'newOutletInput'));
     $('addDeptBtn').addEventListener('click', () => addLookup('department', 'newDeptInput'));
     $('addReasonBtn').addEventListener('click', () => addLookup('reason', 'newReasonInput'));
