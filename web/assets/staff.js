@@ -78,6 +78,14 @@
   function renderItemList() {
     const q = $('itemSearch').value.trim().toLowerCase();
     const listEl = $('itemList');
+
+    // Don't dump all 400 items on screen by default — wait for the salesman
+    // to either type a search term or pick a specific category chip.
+    if (!q && activeCategory === 'All') {
+      listEl.innerHTML = '<div class="item-empty">Start typing an item name, or choose a category above.</div>';
+      return;
+    }
+
     let items = lookups.items;
     if (activeCategory !== 'All') items = items.filter(i => i.category === activeCategory);
     if (q) items = items.filter(i => i.name.toLowerCase().includes(q));
