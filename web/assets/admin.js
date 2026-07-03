@@ -386,7 +386,7 @@
     const thead = $('recordsTable').querySelector('thead');
     thead.innerHTML = '<tr>' + RECORD_COLUMNS.map(([key, label]) =>
       `<th data-sort="${key}">${label}${recordsState.sortKey === key ? (recordsState.sortDir === 'asc' ? ' ▲' : ' ▼') : ''}</th>`
-    ).join('') + '<th>Actions</th></tr>';
+    ).join('') + '<th>Photo</th><th>Actions</th></tr>';
     thead.querySelectorAll('th[data-sort]').forEach(th => th.addEventListener('click', () => {
       const key = th.dataset.sort;
       if (recordsState.sortKey === key) recordsState.sortDir = recordsState.sortDir === 'asc' ? 'desc' : 'asc';
@@ -396,7 +396,7 @@
 
     const tbody = $('recordsTable').querySelector('tbody');
     if (pageEntries.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="${RECORD_COLUMNS.length + 1}" class="table-empty">No records match your filters.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="${RECORD_COLUMNS.length + 2}" class="table-empty">No records match your filters.</td></tr>`;
     } else {
       tbody.innerHTML = pageEntries.map(e => `
         <tr class="${anomalies.has(e.EntryID) ? 'anomaly' : ''}">
@@ -405,6 +405,7 @@
           <td class="num">${fmtNum(e.Quantity)}</td><td>${escapeHtml(e.Unit)}</td>
           <td class="num">${fmtMoney(e.EstimatedCost)}</td><td>${escapeHtml(e.Reason)}</td>
           <td>${escapeHtml(e.StaffName)}</td><td class="wrap-cell">${escapeHtml(e.Remarks || '')}</td>
+          <td>${e.PhotoURL ? `<a href="${escapeHtml(e.PhotoURL)}" target="_blank" rel="noopener" class="badge badge-moss" style="text-decoration:none;">📷 View</a>` : '<span class="text-soft">—</span>'}</td>
           <td class="row-actions">${canEdit(e) ? `<button class="btn btn-ghost" data-edit="${e.EntryID}">Edit</button><button class="btn btn-danger" data-del="${e.EntryID}">Del</button>` : ''}</td>
         </tr>
       `).join('');
