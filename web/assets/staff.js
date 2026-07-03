@@ -10,8 +10,53 @@
   let selectedItem = null;
   let costTouchedByUser = false;
   let photoBase64 = null, photoMime = null, photoName = null;
+  let cart = []; // items added this session while logged in, pending one final "submit all"
 
   const $ = id => document.getElementById(id);
+  const fmtMoney = n => 'AED ' + (Number(n) || 0).toFixed(2);
+
+  function renderCart() {
+    const session = Session.get();
+    $('cartCard').classList.toggle('hidden', !session);
+    $('cartCount').textContent = cart.length + (cart.length === 1 ? ' item' : ' items');
+    const total = cart.reduce((s, e) => s + (Number(e.estimatedCost) || 0), 0);
+    $('cartTotal').textContent = fmtMoney(total);
+    $('submitAllBtn').disabled = cart.length === 0;
+
+    $('cartList').innerHTML = cart.length === 0
+      ? '<div class="text-soft" style="font-size:13px; padding:6px 0;">No items added yet.</div>'
+      : cart.map((e, i) => `
+        <div class="cart-row">
+          <span class="name">${escapeHtml(e.itemName)}</span>
+          <span class="meta">${e.quantity} ${escapeHtml(e.unit)}</span>
+          <span class="cost">${fmtMoney(e.estimatedCost)}</span>
+          <button type="button" class="rm" data-rm="${i}" aria-label="Remove">✕</button>
+        </div>`).join('');
+
+    $('cartList').querySelectorAll('[data-rm]').forEach(btn => btn.addEventListener('click', () => {
+      cart.splice(Number(btn.dataset.rm), 1);
+      renderCart();
+    }));
+
+    $('submitBtn').textContent = session ? 'Add to list' : 'Submit';
+  }
+
+  /** Clears only the item-specific fields, keeping date/outlet/department/staff name
+   *  as-is so the salesman can quickly add their next item without re-typing context. */
+  function resetItemFields() {
+    clearItemSelection();
+    activeCategory = 'All';
+    $('itemSearch').value = '';
+    costTouchedByUser = false;
+    photoBase64 = null; photoMime = null; photoName = null;
+    $('photoPreview').style.display = 'none'; $('photoPreview').src = '';
+    $('photoLabel').textContent = 'Tap to take or upload a photo';
+    $('fQuantity').value = 1;
+    $('fReason').value = '';
+    $('fRemarks').value = '';
+    document.querySelectorAll('.field.invalid').forEach(f => f.classList.remove('invalid'));
+    renderCategoryChips(); renderItemList();
+  }
 
   function todayStr() {
     const d = new Date();
@@ -170,6 +215,7 @@
       outletSelect.disabled = false;
       lockHint.classList.add('hidden');
     }
+    renderCart();
   }
 
   function openLoginModal() {
@@ -183,8 +229,10 @@
     const session = Session.get();
     if (session) {
       // Signed in -> this click means "sign out"
+      if (cart.length > 0 && !confirm(`You have ${cart.length} unsubmitted item(s) in today's list. Sign out anyway and lose them?`)) return;
       WasteFlowAPI.call('logout', { token: session.token }).catch(() => {});
       Session.clear();
+      cart = [];
       renderWhoBar();
       showToast('Signed out', 'success');
     } else {
@@ -278,43 +326,77 @@
     if (!validate()) { showToast('Please fill in all required fields', 'error'); return; }
 
     const payload = buildPayload();
+    const session = Session.get();
+
+    // Logged-in flow: build up a list, submit everything at once at the end.
+    if (session) {
+      cart.push(payload);
+      resetItemFields();
+      renderCart();
+      showToast(`Added — ${cart.length} item${cart.length === 1 ? '' : 's'} in today's list`, 'success');
+      return;
+    }
+
+    // Anonymous / kiosk flow: submit this single entry immediately, as before.
     const btn = $('submitBtn');
     btn.disabled = true; btn.textContent = 'Submitting…';
-
     try {
       if (!navigator.onLine) throw new Error('offline');
       const res = await WasteFlowAPI.call('submitEntry', payload);
       if (!res.ok) throw new Error(res.error || 'Submission failed');
-      showSuccess(false);
+      showSuccess(false, 1);
     } catch (err) {
       OfflineQueue.push(payload);
-      showSuccess(true);
+      showSuccess(true, 1);
     } finally {
       btn.disabled = false; btn.textContent = 'Submit';
     }
   }
 
-  function showSuccess(offline) {
-    document.querySelector('#successScreen h2').textContent = offline ? 'Saved locally' : 'Entry logged';
+  async function submitAllAndLogout() {
+    const session = Session.get();
+    if (!session || cart.length === 0) return;
+
+    const btn = $('submitAllBtn');
+    btn.disabled = true; btn.textContent = 'Submitting…';
+    try {
+      if (!navigator.onLine) throw new Error('offline');
+      const res = await WasteFlowAPI.call('submitEntriesBatch', { token: session.token, entries: cart });
+      if (!res.ok) throw new Error(res.error || 'Submission failed');
+      const count = res.count;
+      cart = [];
+      WasteFlowAPI.call('logout', { token: session.token }).catch(() => {});
+      Session.clear();
+      resetForm();
+      showSuccess(false, count);
+    } catch (err) {
+      // Offline or backend unreachable — queue every cart item individually so
+      // nothing is lost, then still sign the person out since their shift is done.
+      cart.forEach(entry => OfflineQueue.push(entry));
+      const count = cart.length;
+      cart = [];
+      WasteFlowAPI.call('logout', { token: session.token }).catch(() => {});
+      Session.clear();
+      resetForm();
+      showSuccess(true, count);
+    } finally {
+      btn.disabled = false; btn.textContent = "Submit all & sign out";
+    }
+  }
+
+  function showSuccess(offline, count) {
+    const n = count || 1;
+    document.querySelector('#successScreen h2').textContent = offline ? 'Saved locally' : (n > 1 ? `${n} entries logged` : 'Entry logged');
     document.querySelector('#successScreen p').textContent = offline
       ? "You're offline — this will sync automatically once you're back online."
-      : 'Thanks — this has been saved to the waste log.';
+      : (n > 1 ? `Thanks — all ${n} items have been saved to the waste log.` : 'Thanks — this has been saved to the waste log.');
     $('successScreen').classList.add('show');
   }
 
   function resetForm() {
     document.getElementById('wasteForm').reset();
     $('fDate').value = todayStr();
-    clearItemSelection();
-    activeCategory = 'All';
-    $('itemSearch').value = '';
-    costTouchedByUser = false;
-    photoBase64 = null; photoMime = null; photoName = null;
-    $('photoPreview').style.display = 'none'; $('photoPreview').src = '';
-    $('photoLabel').textContent = 'Tap to take or upload a photo';
-    $('fQuantity').value = 1;
-    document.querySelectorAll('.field.invalid').forEach(f => f.classList.remove('invalid'));
-    renderCategoryChips(); renderItemList();
+    resetItemFields();
     renderWhoBar();
   }
 
@@ -354,6 +436,7 @@
     $('logAnotherBtn').addEventListener('click', () => { $('successScreen').classList.remove('show'); resetForm(); });
     $('viewAdminBtn').addEventListener('click', () => window.location.href = 'admin.html');
     $('whoActionBtn').addEventListener('click', handleWhoAction);
+    $('submitAllBtn').addEventListener('click', submitAllAndLogout);
     $('loginModalForm').addEventListener('submit', handleLoginModalSubmit);
     $('loginModalCancel').addEventListener('click', () => $('loginModal').classList.remove('show'));
 
