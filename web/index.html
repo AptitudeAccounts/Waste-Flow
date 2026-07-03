@@ -107,6 +107,17 @@
   .modal-box { width: 100%; max-width: 380px; padding: 24px; }
   .modal-box h3 { margin-bottom: 18px; }
   .modal-actions { display: flex; gap: 10px; margin-top: 6px; }
+
+  /* Cart (today's list) */
+  .cart-row {
+    display: flex; align-items: center; gap: 10px; padding: 9px 0;
+    border-bottom: 1px solid var(--border); font-size: 13.5px;
+  }
+  .cart-row:last-child { border-bottom: none; }
+  .cart-row .name { font-weight: 600; flex: 1; min-width: 0; }
+  .cart-row .meta { color: var(--text-soft); font-size: 12px; }
+  .cart-row .cost { font-family: var(--font-mono); }
+  .cart-row .rm { background: none; border: none; color: var(--clay); font-size: 16px; padding: 2px 6px; }
 </style>
 </head>
 <body>
@@ -134,6 +145,21 @@
         <div class="text-soft" id="whoSub">Anyone at your outlet can submit without an account.</div>
       </div>
       <button type="button" class="btn btn-ghost" id="whoActionBtn" style="padding:8px 14px; font-size:13px;">Sign in</button>
+    </div>
+
+    <div class="card hidden" id="cartCard" style="padding:16px 18px; margin-bottom:16px;">
+      <div class="flex gap-8 center" style="margin-bottom:2px;">
+        <strong style="font-family:var(--font-display); font-size:15px;">Today's list</strong>
+        <div class="spacer"></div>
+        <span class="badge badge-moss" id="cartCount">0 items</span>
+      </div>
+      <div class="text-soft" style="font-size:12.5px; margin-bottom:10px;">Add each wasted item below, then submit them all at once when you're done.</div>
+      <div id="cartList"></div>
+      <div class="flex center" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
+        <strong style="font-family:var(--font-mono); font-size:15px;">Total: <span id="cartTotal">AED 0.00</span></strong>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-primary" id="submitAllBtn" disabled>Submit all &amp; sign out</button>
+      </div>
     </div>
 
     <form id="wasteForm" novalidate>
