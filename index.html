@@ -147,13 +147,22 @@
       <div class="row">
         <div>
           <label>Category</label>
-          <input type="text" id="s-category" placeholder="Auto-filled from item" readonly>
+          <input type="text" id="s-category" placeholder="e.g. Meat, Dry goods, Beverage">
         </div>
-        <div>
-          <label>Quantity (grams)</label>
-          <input type="number" id="s-qty" placeholder="e.g. 250" min="0" step="1">
+        <div id="s-unit-wrap">
+          <label>Unit</label>
+          <select id="s-unit">
+            <option value="g">Grams (g)</option>
+            <option value="ml">Millilitres (ml)</option>
+            <option value="pcs">Pieces (pcs)</option>
+          </select>
         </div>
       </div>
+      <div id="s-newitem-hint" class="hint" style="display:none;">This item isn't in the list yet — it'll be added automatically. Cost will show as AED 0.00 until management sets its price.</div>
+
+      <label>Quantity</label>
+      <input type="number" id="s-qty" placeholder="e.g. 250" min="0" step="1">
+      <div class="hint" id="s-unit-label"></div>
 
       <label>Photo of the waste (camera only)</label>
       <div class="camera-box">
@@ -205,7 +214,7 @@
         </div>
         <div class="scroll-x">
           <table id="sup-table">
-            <thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Qty (g)</th><th>Cost</th><th>Poster</th><th>Photo</th></tr></thead>
+            <thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Qty</th><th>Cost</th><th>Poster</th><th>Photo</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -245,7 +254,7 @@
         </div>
         <div class="scroll-x">
           <table id="mgmt-table">
-            <thead><tr><th>Date</th><th>Outlet</th><th>Item</th><th>Category</th><th>Qty (g)</th><th>Cost</th><th>Poster</th><th>Photo</th></tr></thead>
+            <thead><tr><th>Date</th><th>Outlet</th><th>Item</th><th>Category</th><th>Qty</th><th>Cost</th><th>Poster</th><th>Photo</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -253,11 +262,21 @@
 
       <div class="card">
         <h2>Add / update item cost list</h2>
-        <p class="lead">Upload your item master here. Cost is entered per kilogram; the portal converts to grams automatically.</p>
+        <p class="lead">Cost is entered per base unit — per gram, per millilitre, or per piece — so staff never have to convert anything.</p>
         <div class="row">
           <div><label>Item name</label><input type="text" id="new-item-name"></div>
           <div><label>Category</label><input type="text" id="new-item-cat"></div>
-          <div><label>Cost per kg (AED)</label><input type="number" id="new-item-cost" step="0.01"></div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Base unit</label>
+            <select id="new-item-unit">
+              <option value="g">Grams (g)</option>
+              <option value="ml">Millilitres (ml)</option>
+              <option value="pcs">Pieces (pcs)</option>
+            </select>
+          </div>
+          <div><label>Cost per base unit (AED)</label><input type="number" id="new-item-cost" step="0.0001" placeholder="e.g. 0.0285"></div>
         </div>
         <button class="btn small" id="add-item-btn" style="margin-top:14px;">Add item</button>
       </div>
@@ -269,6 +288,20 @@
           <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="add-outlet-btn">Add outlet</button></div>
         </div>
       </div>
+
+      <div class="card">
+        <h2>Create a supervisor login</h2>
+        <p class="lead">Set up or reset a username/password for a supervisor at a specific outlet.</p>
+        <div class="row">
+          <div>
+            <label>Outlet</label>
+            <select id="new-sup-outlet"><option value="">Loading outlets…</option></select>
+          </div>
+          <div><label>Username</label><input type="text" id="new-sup-username" placeholder="e.g. louvre.sup"></div>
+          <div><label>Password</label><input type="text" id="new-sup-password" placeholder="Set a password"></div>
+        </div>
+        <button class="btn small" id="add-sup-btn" style="margin-top:14px;">Save supervisor login</button>
+      </div>
     </div>
   </section>
 
@@ -278,7 +311,8 @@
 /* ======================================================================
    CONFIGURE THIS: paste your deployed Apps Script /exec URL below
    ====================================================================== */
-https://script.google.com/a/macros/aptitude.ae/s/AKfycbx8IbAjS3UKRwDljxhN_6UcPKXaFUEdr4vxzurAnR7KkWxxMkCoD_iGt1Aniq_3kIo/exec
+const API_URL = "https://script.google.com/a/macros/aptitude.ae/s/AKfycbx8IbAjS3UKRwDljxhN_6UcPKXaFUEdr4vxzurAnR7KkWxxMkCoD_iGt1Aniq_3kIo/exec";
+
 /* ---------------- helpers ---------------- */
 async function api(action, payload) {
   const res = await fetch(API_URL, {
@@ -336,16 +370,40 @@ document.getElementById("s-outlet").addEventListener("change", (e) => {
     e.target.value === "__other__" ? "block" : "none";
 });
 
+const UNIT_LABEL = { g: "grams", ml: "millilitres", pcs: "pieces" };
+
+function findItem(name) {
+  return ITEMS.find(i => i.ItemName.toLowerCase() === String(name || "").toLowerCase());
+}
+
 function recalcCost() {
   const name = document.getElementById("s-item").value;
-  const item = ITEMS.find(i => i.ItemName === name);
-  document.getElementById("s-category").value = item ? item.Category : "";
+  const item = findItem(name);
+  const unitSel = document.getElementById("s-unit");
+  const newItemHint = document.getElementById("s-newitem-hint");
+
+  if (item) {
+    // known item — lock category + unit to what's on file, hide the "new item" hint
+    document.getElementById("s-category").value = item.Category || "";
+    unitSel.value = item.Unit || "g";
+    unitSel.disabled = true;
+    newItemHint.style.display = "none";
+  } else {
+    unitSel.disabled = false;
+    newItemHint.style.display = name ? "block" : "none";
+  }
+
+  document.getElementById("s-unit-label").textContent =
+    "Entering quantity in " + UNIT_LABEL[unitSel.value];
+
   const qty = Number(document.getElementById("s-qty").value) || 0;
-  const cost = item ? (qty / 1000) * Number(item.CostPerKg) : 0;
-  document.getElementById("s-cost").textContent = fmtMoney(cost);
+  const costPerUnit = item ? Number(item.CostPerUnit) : 0;
+  document.getElementById("s-cost").textContent = fmtMoney(qty * costPerUnit);
 }
 document.getElementById("s-item").addEventListener("input", recalcCost);
 document.getElementById("s-qty").addEventListener("input", recalcCost);
+document.getElementById("s-unit").addEventListener("change", recalcCost);
+recalcCost();
 
 let photoBase64 = null, photoMime = null;
 document.getElementById("s-photo").addEventListener("change", (e) => {
@@ -367,12 +425,13 @@ document.getElementById("s-submit").addEventListener("click", async () => {
     ? document.getElementById("s-outlet-new").value.trim()
     : outletSel;
   const itemName = document.getElementById("s-item").value.trim();
-  const qtyGrams = Number(document.getElementById("s-qty").value);
+  const qty = Number(document.getElementById("s-qty").value);
+  const unit = document.getElementById("s-unit").value;
   const posterName = document.getElementById("s-poster").value.trim();
 
   if (!outlet) return toast("Please choose or type an outlet.", true);
-  if (!itemName) return toast("Please choose an item.", true);
-  if (!qtyGrams || qtyGrams <= 0) return toast("Please enter a quantity in grams.", true);
+  if (!itemName) return toast("Please type or choose an item.", true);
+  if (!qty || qty <= 0) return toast("Please enter a quantity.", true);
   if (!posterName) return toast("Please enter your name.", true);
 
   const btn = document.getElementById("s-submit");
@@ -382,15 +441,18 @@ document.getElementById("s-submit").addEventListener("click", async () => {
     const data = await api("submitReport", {
       outlet, itemName,
       category: document.getElementById("s-category").value,
-      qtyGrams, posterName,
+      unit, qty, posterName,
       notes: document.getElementById("s-notes").value,
       photoBase64, photoMimeType: photoMime
     });
-    toast(`Report submitted — cost ${fmtMoney(data.totalCost)}`);
+    toast(data.isNewItem
+      ? `Report submitted — new item added, cost pending from management`
+      : `Report submitted — cost ${fmtMoney(data.totalCost)}`);
     // reset form
     document.getElementById("s-item").value = "";
     document.getElementById("s-category").value = "";
     document.getElementById("s-qty").value = "";
+    document.getElementById("s-unit").disabled = false;
     document.getElementById("s-poster").value = "";
     document.getElementById("s-notes").value = "";
     document.getElementById("s-photo").value = "";
@@ -398,6 +460,7 @@ document.getElementById("s-submit").addEventListener("click", async () => {
     document.getElementById("s-cost").textContent = fmtMoney(0);
     photoBase64 = null; photoMime = null;
     loadStaffData();
+    recalcCost();
   } catch (e) {
     toast("Submit failed: " + e.message, true);
   } finally {
@@ -460,6 +523,8 @@ document.getElementById("mgmt-login-btn").addEventListener("click", async () => 
     document.getElementById("mgmt-outlet").innerHTML =
       `<option value="">All outlets</option>` +
       outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
+    document.getElementById("new-sup-outlet").innerHTML =
+      outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
     loadMgmtReports();
   } catch (e) {
     toast(e.message, true);
@@ -493,7 +558,8 @@ document.getElementById("add-item-btn").addEventListener("click", async () => {
     await api("addItem", {
       itemName: document.getElementById("new-item-name").value,
       category: document.getElementById("new-item-cat").value,
-      costPerKg: Number(document.getElementById("new-item-cost").value)
+      unit: document.getElementById("new-item-unit").value,
+      costPerUnit: Number(document.getElementById("new-item-cost").value)
     });
     toast("Item added.");
     document.getElementById("new-item-name").value = "";
@@ -514,7 +580,18 @@ document.getElementById("add-outlet-btn").addEventListener("click", async () => 
   } catch (e) { toast(e.message, true); }
 });
 
-/* ---------------- shared render helpers ---------------- */
+document.getElementById("add-sup-btn").addEventListener("click", async () => {
+  const outlet = document.getElementById("new-sup-outlet").value;
+  const username = document.getElementById("new-sup-username").value.trim();
+  const password = document.getElementById("new-sup-password").value.trim();
+  if (!outlet || !username || !password) return toast("Fill in outlet, username, and password.", true);
+  try {
+    await api("addSupervisor", { outlet, username, password });
+    toast(`Supervisor login saved for ${outlet}.`);
+    document.getElementById("new-sup-username").value = "";
+    document.getElementById("new-sup-password").value = "";
+  } catch (e) { toast(e.message, true); }
+});
 function renderTable(tableId, rows, withOutlet) {
   const tbody = document.querySelector("#" + tableId + " tbody");
   tbody.innerHTML = rows.map(r => `
@@ -523,7 +600,7 @@ function renderTable(tableId, rows, withOutlet) {
       ${withOutlet ? `<td>${r.Outlet}</td>` : ""}
       <td>${r.ItemName}</td>
       <td>${r.Category}</td>
-      <td>${r.QtyGrams}</td>
+      <td>${r.Qty} ${r.Unit || ""}</td>
       <td class="cost">${fmtMoney(r.TotalCost)}</td>
       <td>${r.PosterName}</td>
       <td>${r.PhotoURL ? `<a href="${r.PhotoURL}" target="_blank">View</a>` : "—"}</td>
@@ -533,10 +610,14 @@ function renderTable(tableId, rows, withOutlet) {
 
 function renderSummary(elId, rows) {
   const totalCost = rows.reduce((s, r) => s + Number(r.TotalCost || 0), 0);
-  const totalGrams = rows.reduce((s, r) => s + Number(r.QtyGrams || 0), 0);
+  const grams = rows.filter(r => r.Unit === "g").reduce((s, r) => s + Number(r.Qty || 0), 0);
+  const ml = rows.filter(r => r.Unit === "ml").reduce((s, r) => s + Number(r.Qty || 0), 0);
+  const pcs = rows.filter(r => r.Unit === "pcs").reduce((s, r) => s + Number(r.Qty || 0), 0);
   document.getElementById(elId).innerHTML = `
     <div class="stat"><div class="n">${rows.length}</div><div class="l">Reports</div></div>
-    <div class="stat"><div class="n">${(totalGrams/1000).toFixed(2)} kg</div><div class="l">Total waste</div></div>
+    <div class="stat"><div class="n">${(grams/1000).toFixed(2)} kg</div><div class="l">Total weight waste</div></div>
+    <div class="stat"><div class="n">${(ml/1000).toFixed(2)} L</div><div class="l">Total liquid waste</div></div>
+    <div class="stat"><div class="n">${pcs}</div><div class="l">Pieces wasted</div></div>
     <div class="stat"><div class="n">${fmtMoney(totalCost)}</div><div class="l">Total cost</div></div>
   `;
 }
