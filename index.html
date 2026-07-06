@@ -2,48 +2,545 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WasteFlow</title>
-<link rel="stylesheet" href="web/assets/styles.css">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aptitude Waste Portal</title>
 <style>
-  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-  .wrap { width: 100%; max-width: 420px; text-align: center; }
-  .mark {
-    width: 60px; height: 60px; border-radius: 16px; background: var(--moss); margin: 0 auto 22px;
-    display: flex; align-items: center; justify-content: center;
+  :root{
+    --ink:#1E2019;
+    --ink-soft:#3A3D33;
+    --paper:#F6F5F0;
+    --panel:#FFFFFF;
+    --line:#DEDBD0;
+    --moss:#5B6E4F;
+    --moss-deep:#43533A;
+    --amber:#B5763A;
+    --danger:#A6412F;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
-  h1 { font-size: 26px; margin-bottom: 6px; }
-  .sub { color: var(--text-soft); font-size: 14px; margin-bottom: 34px; }
-  .link-card {
-    display: block; text-decoration: none; padding: 22px; border-radius: var(--radius-md);
-    background: var(--surface); border: 1.5px solid var(--border); margin-bottom: 14px; text-align: left;
-    transition: border-color 0.15s ease;
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--sans); -webkit-font-smoothing:antialiased;
   }
-  .link-card:hover { border-color: var(--moss); }
-  .link-card .icon { font-size: 22px; margin-bottom: 8px; display: block; }
-  .link-card .title { font-family: var(--font-display); font-weight: 600; font-size: 17px; color: var(--text); margin-bottom: 3px; }
-  .link-card .desc { font-size: 13px; color: var(--text-soft); }
+  .topbar{
+    background:var(--ink); color:var(--paper);
+    padding:18px 20px; display:flex; align-items:center; justify-content:space-between;
+    position:sticky; top:0; z-index:20;
+  }
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand .mark{
+    width:30px; height:30px; border-radius:7px; background:var(--moss);
+    display:flex; align-items:center; justify-content:center; font-size:16px;
+  }
+  .brand .name{font-weight:700; letter-spacing:.2px; font-size:16px;}
+  .brand .sub{font-size:11px; color:#C7C4B6; letter-spacing:.3px;}
+  nav.tabs{display:flex; gap:6px;}
+  nav.tabs button{
+    background:transparent; border:1px solid #4B4D40; color:#DFDCCF;
+    padding:8px 14px; border-radius:20px; font-size:13px; cursor:pointer;
+    font-family:var(--sans); transition:.15s;
+  }
+  nav.tabs button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
+  main{max-width:880px; margin:0 auto; padding:26px 18px 80px;}
+  .view{display:none;}
+  .view.active{display:block; animation:fade .25s ease;}
+  @keyframes fade{from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none}}
+
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:22px; margin-bottom:16px;
+  }
+  h1{font-size:22px; margin:0 0 4px;}
+  h2{font-size:17px; margin:0 0 14px; color:var(--ink);}
+  p.lead{color:var(--ink-soft); font-size:13.5px; margin:0 0 18px;}
+  label{display:block; font-size:12.5px; font-weight:600; color:var(--ink-soft); margin:14px 0 6px; text-transform:uppercase; letter-spacing:.4px;}
+  label:first-child{margin-top:0;}
+  input[type=text], input[type=number], input[type=email], input[type=password], input[type=date], select, textarea{
+    width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:9px;
+    font-size:14.5px; font-family:var(--sans); background:#FCFBF8; color:var(--ink);
+  }
+  textarea{resize:vertical; min-height:64px;}
+  input:focus, select:focus, textarea:focus{outline:2px solid var(--moss); outline-offset:1px; border-color:var(--moss);}
+  .row{display:flex; gap:12px;}
+  .row > div{flex:1;}
+  .btn{
+    background:var(--moss); color:#fff; border:none; padding:12px 18px; border-radius:9px;
+    font-weight:600; font-size:14.5px; cursor:pointer; margin-top:18px; width:100%;
+    font-family:var(--sans); transition:.15s;
+  }
+  .btn:hover{background:var(--moss-deep);}
+  .btn.ghost{background:transparent; border:1px solid var(--line); color:var(--ink); width:auto; margin-top:0; padding:8px 14px; font-size:13px;}
+  .btn.small{width:auto; padding:8px 14px; font-size:13px; margin-top:0;}
+  .cost-readout{
+    background:var(--ink); color:#fff; border-radius:11px; padding:16px 18px; margin-top:18px;
+    display:flex; justify-content:space-between; align-items:baseline;
+  }
+  .cost-readout .lbl{font-size:12px; color:#C7C4B6; text-transform:uppercase; letter-spacing:.5px;}
+  .cost-readout .val{font-family:var(--mono); font-size:24px; font-weight:600; color:#E9C46A;}
+  .camera-box{
+    border:1.5px dashed var(--line); border-radius:11px; padding:16px; text-align:center; margin-top:6px;
+    background:#FCFBF8;
+  }
+  .camera-box img{max-width:100%; border-radius:8px; margin-top:10px;}
+  .toast{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:#fff; padding:12px 20px; border-radius:9px; font-size:13.5px;
+    box-shadow:0 8px 24px rgba(0,0,0,.2); z-index:50; max-width:90%;
+  }
+  .toast.err{background:var(--danger);}
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th, td{text-align:left; padding:9px 10px; border-bottom:1px solid var(--line);}
+  th{font-size:11px; text-transform:uppercase; letter-spacing:.3px; color:var(--ink-soft); font-weight:700;}
+  td.cost{font-family:var(--mono); color:var(--amber); font-weight:600;}
+  .filters{display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px;}
+  .filters > div{flex:1; min-width:130px;}
+  .summary-strip{display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap;}
+  .stat{flex:1; min-width:130px; background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:14px 16px;}
+  .stat .n{font-family:var(--mono); font-size:20px; font-weight:700; color:var(--moss-deep);}
+  .stat .l{font-size:11px; text-transform:uppercase; color:var(--ink-soft); letter-spacing:.3px;}
+  .loginbox{max-width:380px; margin:40px auto;}
+  .hint{font-size:12px; color:var(--ink-soft); margin-top:8px;}
+  .logout-row{display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;}
+  .badge{font-size:11px; background:var(--moss); color:#fff; padding:3px 10px; border-radius:20px;}
+  .scroll-x{overflow-x:auto;}
+  ::placeholder{color:#A6A28F;}
 </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="mark">
-      <svg width="30" height="30" viewBox="0 0 34 34" fill="none"><path d="M9 12h16M9 17h16M9 22h10" stroke="#F6F4EE" stroke-width="2.4" stroke-linecap="round"/></svg>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="mark">🗑️</div>
+    <div>
+      <div class="name">Aptitude Waste Portal</div>
+      <div class="sub">F&amp;B waste logging &amp; cost tracking</div>
     </div>
-    <h1>WasteFlow</h1>
-    <div class="sub">Multi-outlet waste management system</div>
-
-    <a class="link-card" href="web/index.html">
-      <span class="icon">📱</span>
-      <div class="title">Log Waste (Staff)</div>
-      <div class="desc">Mobile submission form — no login needed for kiosk use, or sign in for branch-locked accounts.</div>
-    </a>
-
-    <a class="link-card" href="web/admin.html">
-      <span class="icon">📊</span>
-      <div class="title">Dashboard (Admin / Managers)</div>
-      <div class="desc">Reports, KPIs, records, and user management. Login required.</div>
-    </a>
   </div>
+  <nav class="tabs">
+    <button data-view="staff" class="active">Report Waste</button>
+    <button data-view="supervisor">Supervisor</button>
+    <button data-view="management">Management</button>
+  </nav>
+</div>
+
+<main>
+
+  <!-- ============ STAFF VIEW (no login) ============ -->
+  <section id="view-staff" class="view active">
+    <div class="card">
+      <h1>Log a waste item</h1>
+      <p class="lead">No login needed. Take a photo, pick the item and outlet, enter the weight — the cost is calculated for you.</p>
+
+      <label>Outlet</label>
+      <select id="s-outlet">
+        <option value="">Loading outlets…</option>
+      </select>
+      <div id="s-outlet-other" style="display:none; margin-top:8px;">
+        <input type="text" id="s-outlet-new" placeholder="Type the new outlet name">
+      </div>
+
+      <label>Item</label>
+      <input type="text" list="item-list" id="s-item" placeholder="Start typing an item name…">
+      <datalist id="item-list"></datalist>
+
+      <div class="row">
+        <div>
+          <label>Category</label>
+          <input type="text" id="s-category" placeholder="Auto-filled from item" readonly>
+        </div>
+        <div>
+          <label>Quantity (grams)</label>
+          <input type="number" id="s-qty" placeholder="e.g. 250" min="0" step="1">
+        </div>
+      </div>
+
+      <label>Photo of the waste (camera only)</label>
+      <div class="camera-box">
+        <input type="file" accept="image/*" capture="environment" id="s-photo">
+        <div id="s-photo-preview"></div>
+      </div>
+
+      <label>Your name</label>
+      <input type="text" id="s-poster" placeholder="Who is reporting this?">
+
+      <label>Notes (optional)</label>
+      <textarea id="s-notes" placeholder="Reason for waste, shift, anything relevant…"></textarea>
+
+      <div class="cost-readout">
+        <div>
+          <div class="lbl">Estimated cost</div>
+        </div>
+        <div class="val" id="s-cost">AED 0.00</div>
+      </div>
+
+      <button class="btn" id="s-submit">Submit report</button>
+    </div>
+  </section>
+
+  <!-- ============ SUPERVISOR VIEW ============ -->
+  <section id="view-supervisor" class="view">
+    <div id="sup-login" class="loginbox card">
+      <h2>Supervisor login</h2>
+      <label>Username</label>
+      <input type="text" id="sup-username">
+      <label>Password</label>
+      <input type="password" id="sup-password">
+      <button class="btn" id="sup-login-btn">Log in</button>
+      <div class="hint">Access is scoped to your outlet only.</div>
+    </div>
+
+    <div id="sup-dashboard" style="display:none;">
+      <div class="logout-row">
+        <div><span class="badge" id="sup-outlet-badge"></span></div>
+        <button class="btn ghost small" id="sup-logout">Log out</button>
+      </div>
+      <div class="summary-strip" id="sup-summary"></div>
+      <div class="card">
+        <div class="filters">
+          <div><label>From</label><input type="date" id="sup-from"></div>
+          <div><label>To</label><input type="date" id="sup-to"></div>
+          <div><label>Item</label><input type="text" id="sup-item" placeholder="Filter by item"></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="sup-filter">Apply</button></div>
+        </div>
+        <div class="scroll-x">
+          <table id="sup-table">
+            <thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Qty (g)</th><th>Cost</th><th>Poster</th><th>Photo</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MANAGEMENT VIEW ============ -->
+  <section id="view-management" class="view">
+    <div id="mgmt-login" class="loginbox card">
+      <h2>Management login</h2>
+      <label>Email</label>
+      <input type="email" id="mgmt-email">
+      <label>Password</label>
+      <input type="password" id="mgmt-password">
+      <button class="btn" id="mgmt-login-btn">Log in</button>
+      <div class="hint">Full access — all outlets, all filters.</div>
+    </div>
+
+    <div id="mgmt-dashboard" style="display:none;">
+      <div class="logout-row">
+        <div><span class="badge" id="mgmt-name-badge"></span></div>
+        <button class="btn ghost small" id="mgmt-logout">Log out</button>
+      </div>
+      <div class="summary-strip" id="mgmt-summary"></div>
+      <div class="card">
+        <h2>Filter reports</h2>
+        <div class="filters">
+          <div><label>Outlet</label><select id="mgmt-outlet"><option value="">All outlets</option></select></div>
+          <div><label>Category</label><input type="text" id="mgmt-category" placeholder="e.g. Food waste"></div>
+          <div><label>Item</label><input type="text" id="mgmt-item" placeholder="Filter by item"></div>
+        </div>
+        <div class="filters">
+          <div><label>From</label><input type="date" id="mgmt-from"></div>
+          <div><label>To</label><input type="date" id="mgmt-to"></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="mgmt-filter">Apply filters</button></div>
+        </div>
+        <div class="scroll-x">
+          <table id="mgmt-table">
+            <thead><tr><th>Date</th><th>Outlet</th><th>Item</th><th>Category</th><th>Qty (g)</th><th>Cost</th><th>Poster</th><th>Photo</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Add / update item cost list</h2>
+        <p class="lead">Upload your item master here. Cost is entered per kilogram; the portal converts to grams automatically.</p>
+        <div class="row">
+          <div><label>Item name</label><input type="text" id="new-item-name"></div>
+          <div><label>Category</label><input type="text" id="new-item-cat"></div>
+          <div><label>Cost per kg (AED)</label><input type="number" id="new-item-cost" step="0.01"></div>
+        </div>
+        <button class="btn small" id="add-item-btn" style="margin-top:14px;">Add item</button>
+      </div>
+
+      <div class="card">
+        <h2>Add outlet</h2>
+        <div class="row">
+          <div><label>Outlet name</label><input type="text" id="new-outlet-name"></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="add-outlet-btn">Add outlet</button></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+/* ======================================================================
+   CONFIGURE THIS: paste your deployed Apps Script /exec URL below
+   ====================================================================== */
+https://script.google.com/a/macros/aptitude.ae/s/AKfycbx8IbAjS3UKRwDljxhN_6UcPKXaFUEdr4vxzurAnR7KkWxxMkCoD_iGt1Aniq_3kIo/exec
+
+/* ---------------- helpers ---------------- */
+async function api(action, payload) {
+  const res = await fetch(API_URL, {
+    method: "POST",
+    body: JSON.stringify({ action, payload: payload || {} })
+  });
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || "Request failed");
+  return json.data;
+}
+
+function toast(msg, isErr) {
+  const t = document.createElement("div");
+  t.className = "toast" + (isErr ? " err" : "");
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3800);
+}
+
+function fmtMoney(n) { return "AED " + Number(n || 0).toFixed(2); }
+function fmtDate(d) { return new Date(d).toLocaleString(); }
+
+/* ---------------- tab switching ---------------- */
+document.querySelectorAll("nav.tabs button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav.tabs button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("view-" + btn.dataset.view).classList.add("active");
+  });
+});
+
+/* ================= STAFF VIEW ================= */
+let ITEMS = [];
+let OUTLETS = [];
+
+async function loadStaffData() {
+  try {
+    OUTLETS = await api("getOutlets");
+    const sel = document.getElementById("s-outlet");
+    sel.innerHTML = OUTLETS.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("")
+      + `<option value="__other__">+ Add new outlet…</option>`;
+
+    ITEMS = await api("getItems");
+    document.getElementById("item-list").innerHTML =
+      ITEMS.map(i => `<option value="${i.ItemName}">`).join("");
+  } catch (e) {
+    toast("Could not load outlets/items. Check API_URL. " + e.message, true);
+  }
+}
+loadStaffData();
+
+document.getElementById("s-outlet").addEventListener("change", (e) => {
+  document.getElementById("s-outlet-other").style.display =
+    e.target.value === "__other__" ? "block" : "none";
+});
+
+function recalcCost() {
+  const name = document.getElementById("s-item").value;
+  const item = ITEMS.find(i => i.ItemName === name);
+  document.getElementById("s-category").value = item ? item.Category : "";
+  const qty = Number(document.getElementById("s-qty").value) || 0;
+  const cost = item ? (qty / 1000) * Number(item.CostPerKg) : 0;
+  document.getElementById("s-cost").textContent = fmtMoney(cost);
+}
+document.getElementById("s-item").addEventListener("input", recalcCost);
+document.getElementById("s-qty").addEventListener("input", recalcCost);
+
+let photoBase64 = null, photoMime = null;
+document.getElementById("s-photo").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  photoMime = file.type;
+  const reader = new FileReader();
+  reader.onload = () => {
+    photoBase64 = reader.result.split(",")[1];
+    document.getElementById("s-photo-preview").innerHTML =
+      `<img src="${reader.result}">`;
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById("s-submit").addEventListener("click", async () => {
+  const outletSel = document.getElementById("s-outlet").value;
+  const outlet = outletSel === "__other__"
+    ? document.getElementById("s-outlet-new").value.trim()
+    : outletSel;
+  const itemName = document.getElementById("s-item").value.trim();
+  const qtyGrams = Number(document.getElementById("s-qty").value);
+  const posterName = document.getElementById("s-poster").value.trim();
+
+  if (!outlet) return toast("Please choose or type an outlet.", true);
+  if (!itemName) return toast("Please choose an item.", true);
+  if (!qtyGrams || qtyGrams <= 0) return toast("Please enter a quantity in grams.", true);
+  if (!posterName) return toast("Please enter your name.", true);
+
+  const btn = document.getElementById("s-submit");
+  btn.disabled = true; btn.textContent = "Submitting…";
+
+  try {
+    const data = await api("submitReport", {
+      outlet, itemName,
+      category: document.getElementById("s-category").value,
+      qtyGrams, posterName,
+      notes: document.getElementById("s-notes").value,
+      photoBase64, photoMimeType: photoMime
+    });
+    toast(`Report submitted — cost ${fmtMoney(data.totalCost)}`);
+    // reset form
+    document.getElementById("s-item").value = "";
+    document.getElementById("s-category").value = "";
+    document.getElementById("s-qty").value = "";
+    document.getElementById("s-poster").value = "";
+    document.getElementById("s-notes").value = "";
+    document.getElementById("s-photo").value = "";
+    document.getElementById("s-photo-preview").innerHTML = "";
+    document.getElementById("s-cost").textContent = fmtMoney(0);
+    photoBase64 = null; photoMime = null;
+    loadStaffData();
+  } catch (e) {
+    toast("Submit failed: " + e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = "Submit report";
+  }
+});
+
+/* ================= SUPERVISOR VIEW ================= */
+let supSession = null;
+
+document.getElementById("sup-login-btn").addEventListener("click", async () => {
+  try {
+    supSession = await api("supervisorLogin", {
+      username: document.getElementById("sup-username").value,
+      password: document.getElementById("sup-password").value
+    });
+    document.getElementById("sup-login").style.display = "none";
+    document.getElementById("sup-dashboard").style.display = "block";
+    document.getElementById("sup-outlet-badge").textContent = supSession.outlet;
+    loadSupReports();
+  } catch (e) {
+    toast(e.message, true);
+  }
+});
+
+document.getElementById("sup-logout").addEventListener("click", () => {
+  supSession = null;
+  document.getElementById("sup-login").style.display = "block";
+  document.getElementById("sup-dashboard").style.display = "none";
+  document.getElementById("sup-username").value = "";
+  document.getElementById("sup-password").value = "";
+});
+
+document.getElementById("sup-filter").addEventListener("click", loadSupReports);
+
+async function loadSupReports() {
+  const rows = await api("getReports", {
+    scopeOutlet: supSession.outlet,
+    itemName: document.getElementById("sup-item").value || undefined,
+    dateFrom: document.getElementById("sup-from").value || undefined,
+    dateTo: document.getElementById("sup-to").value || undefined
+  });
+  renderTable("sup-table", rows, false);
+  renderSummary("sup-summary", rows);
+}
+
+/* ================= MANAGEMENT VIEW ================= */
+let mgmtSession = null;
+
+document.getElementById("mgmt-login-btn").addEventListener("click", async () => {
+  try {
+    mgmtSession = await api("managementLogin", {
+      email: document.getElementById("mgmt-email").value,
+      password: document.getElementById("mgmt-password").value
+    });
+    document.getElementById("mgmt-login").style.display = "none";
+    document.getElementById("mgmt-dashboard").style.display = "block";
+    document.getElementById("mgmt-name-badge").textContent = mgmtSession.name + " · " + mgmtSession.title;
+    const outlets = await api("getOutlets");
+    document.getElementById("mgmt-outlet").innerHTML =
+      `<option value="">All outlets</option>` +
+      outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
+    loadMgmtReports();
+  } catch (e) {
+    toast(e.message, true);
+  }
+});
+
+document.getElementById("mgmt-logout").addEventListener("click", () => {
+  mgmtSession = null;
+  document.getElementById("mgmt-login").style.display = "block";
+  document.getElementById("mgmt-dashboard").style.display = "none";
+  document.getElementById("mgmt-email").value = "";
+  document.getElementById("mgmt-password").value = "";
+});
+
+document.getElementById("mgmt-filter").addEventListener("click", loadMgmtReports);
+
+async function loadMgmtReports() {
+  const rows = await api("getReports", {
+    outlet: document.getElementById("mgmt-outlet").value || undefined,
+    category: document.getElementById("mgmt-category").value || undefined,
+    itemName: document.getElementById("mgmt-item").value || undefined,
+    dateFrom: document.getElementById("mgmt-from").value || undefined,
+    dateTo: document.getElementById("mgmt-to").value || undefined
+  });
+  renderTable("mgmt-table", rows, true);
+  renderSummary("mgmt-summary", rows);
+}
+
+document.getElementById("add-item-btn").addEventListener("click", async () => {
+  try {
+    await api("addItem", {
+      itemName: document.getElementById("new-item-name").value,
+      category: document.getElementById("new-item-cat").value,
+      costPerKg: Number(document.getElementById("new-item-cost").value)
+    });
+    toast("Item added.");
+    document.getElementById("new-item-name").value = "";
+    document.getElementById("new-item-cat").value = "";
+    document.getElementById("new-item-cost").value = "";
+  } catch (e) { toast(e.message, true); }
+});
+
+document.getElementById("add-outlet-btn").addEventListener("click", async () => {
+  try {
+    await api("addOutlet", { name: document.getElementById("new-outlet-name").value });
+    toast("Outlet added.");
+    document.getElementById("new-outlet-name").value = "";
+    const outlets = await api("getOutlets");
+    document.getElementById("mgmt-outlet").innerHTML =
+      `<option value="">All outlets</option>` +
+      outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
+  } catch (e) { toast(e.message, true); }
+});
+
+/* ---------------- shared render helpers ---------------- */
+function renderTable(tableId, rows, withOutlet) {
+  const tbody = document.querySelector("#" + tableId + " tbody");
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${fmtDate(r.Timestamp)}</td>
+      ${withOutlet ? `<td>${r.Outlet}</td>` : ""}
+      <td>${r.ItemName}</td>
+      <td>${r.Category}</td>
+      <td>${r.QtyGrams}</td>
+      <td class="cost">${fmtMoney(r.TotalCost)}</td>
+      <td>${r.PosterName}</td>
+      <td>${r.PhotoURL ? `<a href="${r.PhotoURL}" target="_blank">View</a>` : "—"}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="8">No reports match these filters.</td></tr>`;
+}
+
+function renderSummary(elId, rows) {
+  const totalCost = rows.reduce((s, r) => s + Number(r.TotalCost || 0), 0);
+  const totalGrams = rows.reduce((s, r) => s + Number(r.QtyGrams || 0), 0);
+  document.getElementById(elId).innerHTML = `
+    <div class="stat"><div class="n">${rows.length}</div><div class="l">Reports</div></div>
+    <div class="stat"><div class="n">${(totalGrams/1000).toFixed(2)} kg</div><div class="l">Total waste</div></div>
+    <div class="stat"><div class="n">${fmtMoney(totalCost)}</div><div class="l">Total cost</div></div>
+  `;
+}
+</script>
 </body>
 </html>
