@@ -353,6 +353,7 @@
           <div><label>Outlet</label><select id="inv-mgmt-outlet"></select></div>
           <div><label>Date</label><input type="date" id="inv-mgmt-date"></div>
           <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="inv-mgmt-load">Load</button></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small outline" id="inv-mgmt-pdf">Download PDF</button></div>
         </div>
         <div class="scroll-x">
           <table id="inv-mgmt-table">
@@ -945,12 +946,17 @@ async function populateInvMgmtOutlets() {
     outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
 }
 
+let lastInvMgmtRows = [];
+let lastInvMgmtMeta = { date: "", outlet: "" };
+
 async function loadMgmtInventory() {
   const date = document.getElementById("inv-mgmt-date").value || todayStr();
   const outlet = document.getElementById("inv-mgmt-outlet").value;
   if (!outlet) return;
   try {
     const rows = await api("getInventory", { date, outlet });
+    lastInvMgmtRows = rows;
+    lastInvMgmtMeta = { date, outlet };
     const tbody = document.querySelector("#inv-mgmt-table tbody");
     tbody.innerHTML = rows.map(r => `
       <tr>
@@ -963,6 +969,34 @@ async function loadMgmtInventory() {
   }
 }
 document.getElementById("inv-mgmt-load").addEventListener("click", loadMgmtInventory);
+
+document.getElementById("inv-mgmt-pdf").addEventListener("click", () => {
+  if (!lastInvMgmtRows.length) return toast("Load an outlet/date first.", true);
+  const win = window.open("", "_blank");
+  const rowsHtml = lastInvMgmtRows.map(r => `
+    <tr>
+      <td>${r.ItemName}</td><td>${r.Unit}</td><td>${r.Opening}</td>
+      <td>${r.Received}</td><td>${r.Wasted}</td><td>${r.Available}</td>
+    </tr>
+  `).join("");
+  win.document.write(`
+    <html><head><title>Inventory Report</title>
+    <style>
+      body{font-family:sans-serif; padding:24px; color:#1E2019;}
+      h1{font-size:18px;}
+      table{width:100%; border-collapse:collapse; font-size:12px;}
+      th,td{border:1px solid #ccc; padding:6px; text-align:left;}
+      th{background:#f0efe9;}
+    </style></head><body>
+    <h1>Aptitude Waste Portal — Inventory Report</h1>
+    <p>Outlet: ${lastInvMgmtMeta.outlet} · Date: ${lastInvMgmtMeta.date} · Generated: ${new Date().toLocaleString()}</p>
+    <table><thead><tr><th>Item</th><th>Unit</th><th>Opening</th><th>Item Received</th><th>Wasted</th><th>Available</th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table>
+    </body></html>
+  `);
+  win.document.close();
+  setTimeout(() => win.print(), 400);
+});
 
 let mgmtSession = null;
 let mgmtSupervisorsMap = {};
