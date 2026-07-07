@@ -1,519 +1,1482 @@
-/**
- * APTITUDE WASTE PORTAL — Backend (Google Apps Script)
- * ------------------------------------------------------
- * Bind this script to a Google Sheet with the following tabs (exact names):
- *   Outlets      -> OutletID | OutletName | Active
- *   Items        -> ItemID | ItemName | Category | Unit | CostPerUnit | Active
- *                   Unit is the smallest base unit for that item: g (grams),
- *                   ml (millilitres), or pcs (pieces/each). CostPerUnit is the
- *                   cost of ONE gram / ONE ml / ONE piece (a small number).
- *   Reports      -> ReportID | Timestamp | Outlet | ItemName | Category | Qty | Unit | UnitCost | TotalCost | PosterName | PhotoURL | Notes
- *   Supervisors  -> Outlet | Username | Password
- *   Management   -> Name | Email | Password | Role
- *   InventoryReceipts -> Date | Outlet | ItemName | Received
- *                   (Wasted is pulled live from Reports; Available/Closing
- *                   stock is computed by rolling forward day by day.)
- *   InventoryOpeningOverrides -> Date | Outlet | ItemName | OpeningStock
- *                   (Lets a supervisor set the true physical count as of any
- *                   date — a "day zero" reset point — instead of assuming
- *                   stock always starts at 0.)
- *
- * Deploy: Deploy > New deployment > Web app
- *   Execute as: Me
- *   Who has access: Anyone
- * Copy the resulting /exec URL into API_URL in Index.html
- */
-
-const SS = SpreadsheetApp.getActiveSpreadsheet();
-const PHOTO_FOLDER_NAME = "WastePortal_Photos";
-
-function doGet(e) {
-  return jsonOut({ ok: true, message: "Aptitude Waste Portal API is running." });
-}
-
-function doPost(e) {
-  try {
-    const body = JSON.parse(e.postData.contents);
-    const action = body.action;
-    const payload = body.payload || {};
-    let result;
-
-    switch (action) {
-      case "getOutlets":        result = getOutlets(); break;
-      case "getItems":          result = getItems(); break;
-      case "addOutlet":         result = addOutlet(payload); break;
-      case "submitReport":      result = submitReport(payload); break;
-      case "submitBatchReport": result = submitBatchReport(payload); break;
-      case "supervisorLogin":   result = supervisorLogin(payload); break;
-      case "managementLogin":   result = managementLogin(payload); break;
-      case "getReports":        result = getReports(payload); break;
-      case "addItem":           result = addItem(payload); break;
-      case "updateItem":        result = updateItem(payload); break;
-      case "addManagementUser": result = addManagementUser(payload); break;
-      case "addSupervisor":     result = addSupervisor(payload); break;
-      case "getInventory":      result = getInventory(payload); break;
-      case "setReceived":       result = setReceived(payload); break;
-      case "setOpeningStock":   result = setOpeningStock(payload); break;
-      case "getSupervisorsList": result = getSupervisorsList(); break;
-      default:
-        return jsonOut({ ok: false, error: "Unknown action: " + action });
-    }
-    return jsonOut({ ok: true, data: result });
-  } catch (err) {
-    return jsonOut({ ok: false, error: err.message });
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aptitude Waste Portal</title>
+<style>
+  :root{
+    --ink:#1E2019;
+    --ink-soft:#3A3D33;
+    --paper:#F6F5F0;
+    --panel:#FFFFFF;
+    --line:#DEDBD0;
+    --moss:#5B6E4F;
+    --moss-deep:#43533A;
+    --amber:#B5763A;
+    --danger:#A6412F;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
-}
-
-function jsonOut(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-/* ---------------- ONE-TIME SETUP ----------------
- * Run this once from the Apps Script editor (select setupSheets from the
- * function dropdown, click Run) to create all tabs, headers, and seed data.
- * Safe to re-run — it won't duplicate a tab that already exists.
- */
-function setupSheets() {
-  createTab("Outlets", ["OutletID", "OutletName", "Active"], [
-    ["OUT-1", "Louvre", true],
-    ["OUT-2", "ARC", true],
-    ["OUT-3", "DGE", true],
-    ["OUT-4", "Al Qana", true],
-    ["OUT-5", "S45 Khalidya", true],
-    ["OUT-6", "Al Nahyan", true]
-  ]);
-
-  createTab("Items", ["ItemID", "ItemName", "Category", "Unit", "CostPerUnit", "Active"], [
-    ["ITM-1", "Sample Item — replace with your list", "F&B", "g", 0, true]
-  ]);
-
-  createTab("Reports", ["ReportID", "Timestamp", "Outlet", "ItemName", "Category",
-    "Qty", "Unit", "UnitCost", "TotalCost", "PosterName", "PhotoURL", "Notes"], []);
-
-  createTab("Supervisors", ["Outlet", "Username", "Password"], [
-    ["Louvre", "louvre.sup", "ChangeMe123"],
-    ["ARC", "arc.sup", "ChangeMe123"],
-    ["DGE", "dge.sup", "ChangeMe123"],
-    ["Al Qana", "qana.sup", "ChangeMe123"],
-    ["S45 Khalidya", "khalidya.sup", "ChangeMe123"],
-    ["Al Nahyan", "nahyan.sup", "ChangeMe123"]
-  ]);
-
-  createTab("Management", ["Name", "Email", "Password", "Role"], [
-    ["Deven", "Operations@aptitude", "ChangeMe123", "Manager - Operations"],
-    ["Siji", "Admin@aptitude.ae", "ChangeMe123", "Admin"],
-    ["Mansoor", "Accounts@aptitude.ae", "ChangeMe123", "Accounts"]
-  ]);
-
-  createTab("InventoryReceipts", ["Date", "Outlet", "ItemName", "Received"], []);
-  createTab("InventoryOpeningOverrides", ["Date", "Outlet", "ItemName", "OpeningStock"], []);
-
-  SpreadsheetApp.getUi().alert("Setup complete. Tabs created/verified: Outlets, Items, Reports, Supervisors, Management, InventoryReceipts, InventoryOpeningOverrides.\n\nIMPORTANT: change every 'ChangeMe123' password before going live.");
-}
-
-function createTab(name, headers, seedRows) {
-  let sh = SS.getSheetByName(name);
-  if (!sh) {
-    sh = SS.insertSheet(name);
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--sans); -webkit-font-smoothing:antialiased;
   }
-  if (sh.getLastRow() === 0) {
-    sh.appendRow(headers);
-    sh.setFrozenRows(1);
-    seedRows.forEach(row => sh.appendRow(row));
+  .topbar{
+    background:var(--ink); color:var(--paper);
+    padding:18px 20px; display:flex; align-items:center; justify-content:space-between;
+    position:sticky; top:0; z-index:20; flex-wrap:wrap; gap:10px;
   }
-}
-
-/* ---------------- SHEET HELPERS ---------------- */
-
-function sheet(name) {
-  const sh = SS.getSheetByName(name);
-  if (!sh) throw new Error("Missing sheet tab: " + name);
-  return sh;
-}
-
-function readTable(name) {
-  const sh = sheet(name);
-  const values = sh.getDataRange().getValues();
-  const headers = values.shift();
-  return values
-    .filter(row => row.join("") !== "")
-    .map(row => {
-      const obj = {};
-      headers.forEach((h, i) => obj[h] = row[i]);
-      return obj;
-    });
-}
-
-function appendRow(name, rowObj, headers) {
-  const sh = sheet(name);
-  const row = headers.map(h => (rowObj[h] !== undefined ? rowObj[h] : ""));
-  sh.appendRow(row);
-}
-
-/* ---------------- OUTLETS ---------------- */
-
-function getOutlets() {
-  return readTable("Outlets").filter(o => o.Active !== false && o.Active !== "FALSE");
-}
-
-function addOutlet(payload) {
-  const outlets = getOutlets();
-  const exists = outlets.find(o => String(o.OutletName).toLowerCase() === String(payload.name).toLowerCase());
-  if (exists) return exists;
-  const newId = "OUT-" + (outlets.length + 1) + "-" + Date.now().toString().slice(-4);
-  appendRow("Outlets", { OutletID: newId, OutletName: payload.name, Active: true },
-    ["OutletID", "OutletName", "Active"]);
-  return { OutletID: newId, OutletName: payload.name, Active: true };
-}
-
-/* ---------------- ITEMS ---------------- */
-
-function getItems() {
-  return readTable("Items").filter(i => i.Active !== false && i.Active !== "FALSE");
-}
-
-function addItem(payload) {
-  // payload: itemName, category, unit ("g" | "ml" | "pcs"), costPerUnit (optional, defaults 0)
-  const items = readTable("Items");
-  const existing = items.find(i => String(i.ItemName).toLowerCase() === String(payload.itemName).toLowerCase());
-  if (existing) {
-    // Item already exists (likely auto-created by staff with cost 0) —
-    // treat this as filling in / updating its details rather than duplicating it.
-    return updateItem({
-      itemId: existing.ItemID,
-      Category: payload.category || existing.Category,
-      Unit: payload.unit || existing.Unit,
-      CostPerUnit: payload.costPerUnit !== undefined && payload.costPerUnit !== "" ? payload.costPerUnit : existing.CostPerUnit
-    }) && { ...existing, Category: payload.category || existing.Category, Unit: payload.unit || existing.Unit, CostPerUnit: payload.costPerUnit || existing.CostPerUnit };
+  .brand{display:flex; align-items:center; gap:10px;}
+  .brand .mark{
+    width:30px; height:30px; border-radius:7px; background:var(--moss);
+    display:flex; align-items:center; justify-content:center; font-size:16px;
   }
-
-  const newId = "ITM-" + (items.length + 1) + "-" + Date.now().toString().slice(-4);
-  const row = {
-    ItemID: newId,
-    ItemName: payload.itemName,
-    Category: payload.category || "",
-    Unit: payload.unit || "g",
-    CostPerUnit: payload.costPerUnit || 0,
-    Active: true
-  };
-  appendRow("Items", row, ["ItemID", "ItemName", "Category", "Unit", "CostPerUnit", "Active"]);
-  return row;
-}
-
-function updateItem(payload) {
-  const sh = sheet("Items");
-  const data = sh.getDataRange().getValues();
-  const headers = data[0];
-  const idCol = headers.indexOf("ItemID");
-  for (let r = 1; r < data.length; r++) {
-    if (data[r][idCol] === payload.itemId) {
-      headers.forEach((h, c) => {
-        if (payload[h] !== undefined) sh.getRange(r + 1, c + 1).setValue(payload[h]);
-      });
-      return { updated: true };
-    }
+  .brand .name{font-weight:700; letter-spacing:.2px; font-size:16px;}
+  .brand .sub{font-size:11px; color:#C7C4B6; letter-spacing:.3px;}
+  nav.tabs{display:flex; gap:6px; flex-wrap:wrap;}
+  nav.tabs button{
+    background:transparent; border:1px solid #4B4D40; color:#DFDCCF;
+    padding:8px 14px; border-radius:20px; font-size:13px; cursor:pointer;
+    font-family:var(--sans); transition:.15s;
   }
-  throw new Error("Item not found: " + payload.itemId);
-}
+  nav.tabs button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
+  main{max-width:920px; margin:0 auto; padding:26px 18px 80px; transition:max-width .2s;}
+  main.wide{max-width:1360px;}
+  .view{display:none;}
+  .view.active{display:block; animation:fade .25s ease;}
+  @keyframes fade{from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none}}
 
-/* ---------------- REPORTS (STAFF — NO LOGIN) ---------------- */
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:22px; margin-bottom:16px;
+  }
+  h1{font-size:22px; margin:0 0 4px;}
+  h2{font-size:17px; margin:0 0 14px; color:var(--ink);}
+  p.lead{color:var(--ink-soft); font-size:13.5px; margin:0 0 18px;}
+  label{display:block; font-size:12.5px; font-weight:600; color:var(--ink-soft); margin:14px 0 6px; text-transform:uppercase; letter-spacing:.4px;}
+  label:first-child{margin-top:0;}
+  input[type=text], input[type=number], input[type=email], input[type=password], input[type=date], select, textarea{
+    width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:9px;
+    font-size:14.5px; font-family:var(--sans); background:#FCFBF8; color:var(--ink);
+  }
+  textarea{resize:vertical; min-height:64px;}
+  input:focus, select:focus, textarea:focus{outline:2px solid var(--moss); outline-offset:1px; border-color:var(--moss);}
+  .row{display:flex; gap:12px; flex-wrap:wrap;}
+  .row > div{flex:1; min-width:140px;}
+  .btn{
+    background:var(--moss); color:#fff; border:none; padding:12px 18px; border-radius:9px;
+    font-weight:600; font-size:14.5px; cursor:pointer; margin-top:18px; width:100%;
+    font-family:var(--sans); transition:.15s;
+  }
+  .btn:hover{background:var(--moss-deep);}
+  .btn:disabled{opacity:.6; cursor:not-allowed;}
+  .btn.ghost{background:transparent; border:1px solid var(--line); color:var(--ink); width:auto; margin-top:0; padding:8px 14px; font-size:13px;}
+  .btn.small{width:auto; padding:8px 14px; font-size:13px; margin-top:0;}
+  .btn.outline{background:transparent; border:1.5px solid var(--moss); color:var(--moss-deep); width:auto;}
+  .cost-readout{
+    background:var(--ink); color:#fff; border-radius:11px; padding:16px 18px; margin-top:18px;
+    display:flex; justify-content:space-between; align-items:baseline;
+  }
+  .cost-readout .lbl{font-size:12px; color:#C7C4B6; text-transform:uppercase; letter-spacing:.5px;}
+  .cost-readout .val{font-family:var(--mono); font-size:24px; font-weight:600; color:#E9C46A;}
+  .camera-box{
+    border:1.5px dashed var(--line); border-radius:11px; padding:14px; text-align:center; margin-top:6px;
+    background:#FCFBF8;
+  }
+  .camera-box img{max-width:100%; max-height:160px; border-radius:8px; margin-top:10px;}
+  .toast{
+    position:fixed; bottom:22px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:#fff; padding:12px 20px; border-radius:9px; font-size:13.5px;
+    box-shadow:0 8px 24px rgba(0,0,0,.2); z-index:50; max-width:90%;
+  }
+  .toast.err{background:var(--danger);}
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th, td{text-align:left; padding:9px 10px; border-bottom:1px solid var(--line);}
+  th{font-size:11px; text-transform:uppercase; letter-spacing:.3px; color:var(--ink-soft); font-weight:700;}
+  td.cost{font-family:var(--mono); color:var(--amber); font-weight:600;}
+  .filters{display:flex; flex-wrap:wrap; gap:10px; margin-bottom:16px;}
+  .filters > div{flex:1; min-width:130px;}
+  .summary-strip{display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap;}
+  .stat{flex:1; min-width:130px; background:var(--panel); border:1px solid var(--line); border-radius:11px; padding:14px 16px;}
+  .stat .n{font-family:var(--mono); font-size:20px; font-weight:700; color:var(--moss-deep);}
+  .stat .l{font-size:11px; text-transform:uppercase; color:var(--ink-soft); letter-spacing:.3px;}
+  .loginbox{max-width:380px; margin:40px auto;}
+  .hint{font-size:12px; color:var(--ink-soft); margin-top:8px;}
+  .hint.warn{color:var(--danger); font-weight:600;}
+  .logout-row{display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;}
+  .badge{font-size:11px; background:var(--moss); color:#fff; padding:3px 10px; border-radius:20px;}
+  .scroll-x{overflow-x:auto;}
+  ::placeholder{color:#A6A28F;}
+  .item-row{
+    border:1px solid var(--line); border-radius:11px; padding:16px; margin-bottom:14px; background:#FCFBF8; position:relative;
+  }
+  .item-row .rownum{
+    position:absolute; top:-10px; left:14px; background:var(--moss); color:#fff; font-size:11px;
+    font-weight:700; padding:2px 10px; border-radius:10px;
+  }
+  .remove-row{
+    position:absolute; top:10px; right:10px; background:transparent; border:none; color:var(--danger);
+    font-size:12px; cursor:pointer; font-weight:600;
+  }
+  .thumb{width:44px; height:44px; object-fit:cover; border-radius:6px; border:1px solid var(--line);}
+  .modal-overlay{
+    display:none; position:fixed; inset:0; background:rgba(20,20,15,.55); z-index:100;
+    align-items:center; justify-content:center; padding:20px;
+  }
+  .modal-overlay.active{display:flex;}
+  .modal-box{
+    background:var(--panel); border-radius:14px; padding:24px; max-width:420px; width:100%;
+  }
+  .modal-box h3{margin:0 0 10px; font-size:16px;}
+  .modal-box p{font-size:13.5px; color:var(--ink-soft); line-height:1.5;}
+  .modal-actions{display:flex; gap:10px; margin-top:18px;}
+  .modal-actions .btn{margin-top:0;}
+  .modal-actions .btn.secondary{background:transparent; border:1px solid var(--line); color:var(--ink);}
+  .summary-panel{
+    border:1.5px solid var(--moss); background:#F1F4EC; border-radius:12px; padding:18px; margin-top:16px;
+  }
+  .summary-panel h3{margin:0 0 10px; font-size:15px; color:var(--moss-deep);}
+  .summary-line{display:flex; justify-content:space-between; font-size:13.5px; padding:5px 0; border-bottom:1px dashed var(--line);}
+  .summary-total{display:flex; justify-content:space-between; font-weight:700; padding-top:10px; font-family:var(--mono);}
+  .overview-card{background:var(--panel); border:1px solid var(--line);}
+  .overview-header{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:6px;}
+  .period-toggle{display:flex; gap:6px; flex-wrap:wrap;}
+  .period-toggle button{
+    background:#F1F0EA; border:1px solid var(--line); color:var(--ink-soft);
+    padding:7px 14px; border-radius:20px; font-size:12.5px; cursor:pointer; font-family:var(--sans);
+  }
+  .period-toggle button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
+  .kpi-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:14px; margin-top:16px;}
+  .kpi-card{background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:16px; cursor:pointer; transition:.15s;}
+  .kpi-card:hover{border-color:var(--moss); box-shadow:0 4px 14px rgba(0,0,0,.07); transform:translateY(-1px);}
+  .obar-row.clickable{cursor:pointer; transition:.15s;}
+  .obar-row.clickable:hover{background:#F7F6F0;}
+  .modal-box.wide{max-width:760px;}
+  .modal-box.wide table{font-size:12.5px;}
+  .modal-box.wide th, .modal-box.wide td{padding:7px 8px;}
+  .dashboard-grid{display:grid; grid-template-columns:2fr 1fr; gap:16px;}
+  @media (max-width:900px){ .dashboard-grid{grid-template-columns:1fr;} }
+  .kpi-icon{width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; margin-bottom:12px;}
+  .kpi-icon.i-cost{background:#FBEFE1;}
+  .kpi-icon.i-reports{background:#E7ECE0;}
+  .kpi-icon.i-weight{background:#E2ECF3;}
+  .kpi-icon.i-liquid{background:#E5F1EF;}
+  .kpi-icon.i-avg{background:#F1E7F0;}
+  .kpi-n{font-family:var(--mono); font-size:24px; font-weight:700; color:var(--ink);}
+  .kpi-l{font-size:11.5px; text-transform:uppercase; letter-spacing:.3px; color:var(--ink-soft); margin-top:4px;}
+  .charts-grid{display:grid; grid-template-columns:1.2fr 1fr; gap:16px; margin-top:22px;}
+  @media (max-width:760px){ .charts-grid{grid-template-columns:1fr;} }
+  .chart-card{background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:18px;}
+  .chart-card h3{margin:0 0 16px; font-size:14.5px; display:flex; align-items:center; gap:8px;}
+  .trend-bars{display:flex; align-items:flex-end; gap:8px; height:160px; padding-top:10px;}
+  .trend-bar-wrap{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%;}
+  .trend-bar{width:100%; max-width:28px; background:var(--moss); border-radius:4px 4px 0 0; transition:.2s;}
+  .trend-label{font-size:10.5px; color:var(--ink-soft); margin-top:6px;}
+  .obar-row{display:grid; grid-template-columns:120px 1fr 90px; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); font-size:12.5px;}
+  .obar-row .oname{font-weight:600; color:var(--ink);}
+  .obar-row .osup{font-size:10.5px; color:var(--ink-soft); display:block;}
+  .obar-track{background:#EFEEE7; border-radius:6px; height:12px; overflow:hidden;}
+  .obar-fill{background:linear-gradient(90deg,var(--moss),#8FA876); height:100%; border-radius:6px;}
+  .obar-value{font-family:var(--mono); text-align:right; color:var(--moss-deep); font-weight:600;}
+  @media print {
+    .topbar, nav.tabs, .no-print { display:none !important; }
+    body{background:#fff;}
+  }
+</style>
+</head>
+<body>
 
-function submitReport(payload) {
-  const result = createSingleReportRow(payload);
-  return { reportId: result.reportId, totalCost: result.totalCost, unit: result.unit, isNewItem: result.isNewItem };
-}
+<div class="topbar">
+  <div class="brand">
+    <div class="mark">🗑️</div>
+    <div>
+      <div class="name">Aptitude Waste Portal</div>
+      <div class="sub">F&amp;B waste logging &amp; cost tracking</div>
+    </div>
+  </div>
+  <nav class="tabs">
+    <button data-view="staff" class="active">Report Waste</button>
+    <button data-view="supervisor">Supervisor</button>
+    <button data-view="inventory">Inventory</button>
+    <button data-view="management">Management</button>
+  </nav>
+</div>
 
-function submitBatchReport(payload) {
-  // payload: outlet, posterName, items: [{ itemName, category, unit, qty, notes, photoBase64, photoMimeType }]
-  const rows = [];
-  let grandTotal = 0;
-  (payload.items || []).forEach(line => {
-    const result = createSingleReportRow({
-      outlet: payload.outlet,
-      posterName: payload.posterName,
-      itemName: line.itemName,
-      category: line.category,
-      unit: line.unit,
-      qty: line.qty,
-      notes: line.notes,
-      photoBase64: line.photoBase64,
-      photoMimeType: line.photoMimeType
-    });
-    grandTotal += result.totalCost;
-    rows.push({
-      itemName: line.itemName,
-      qty: line.qty,
-      unit: result.unit,
-      totalCost: result.totalCost,
-      reportId: result.reportId
-    });
+<main>
+
+  <!-- ============ STAFF VIEW (no login) ============ -->
+  <section id="view-staff" class="view active">
+    <div class="card">
+      <h1>Log a waste item</h1>
+      <p class="lead">No login needed. Take a live photo, pick the item and outlet, enter the quantity — the cost is calculated for you.</p>
+
+      <label>Outlet</label>
+      <select id="s-outlet">
+        <option value="">Loading outlets…</option>
+      </select>
+      <div id="s-outlet-other" style="display:none; margin-top:8px;">
+        <input type="text" id="s-outlet-new" placeholder="Type the new outlet name">
+      </div>
+
+      <label>Item</label>
+      <select id="s-item-select">
+        <option value="">Loading items…</option>
+      </select>
+      <div id="s-item-other" style="display:none; margin-top:8px;">
+        <input type="text" id="s-item-new" placeholder="Type the new item name">
+      </div>
+      <div id="s-newitem-hint" class="hint" style="display:none;">This item isn't in the list yet — it'll be added automatically. Cost will show as AED 0.00 until management sets its price.</div>
+
+      <div class="row">
+        <div>
+          <label>Category</label>
+          <input type="text" id="s-category" placeholder="e.g. Meat, Dry goods, Beverage">
+        </div>
+        <div>
+          <label>Unit</label>
+          <select id="s-unit">
+            <option value="g">Grams (g)</option>
+            <option value="kg">Kilograms (kg)</option>
+            <option value="ml">Millilitres (ml)</option>
+            <option value="l">Litres (l)</option>
+            <option value="pcs">Pieces (pcs)</option>
+            <option value="box">Box</option>
+            <option value="tray">Tray</option>
+            <option value="packet">Packet</option>
+            <option value="portion">Portion</option>
+            <option value="dozen">Dozen</option>
+          </select>
+        </div>
+      </div>
+
+      <label>Quantity</label>
+      <input type="number" id="s-qty" placeholder="e.g. 250" min="0" step="1">
+      <div class="hint" id="s-unit-label"></div>
+
+      <label>Photo of the waste — camera only, no gallery upload</label>
+      <div class="camera-box">
+        <input type="file" accept="image/*" capture="environment" id="s-photo">
+        <div id="s-photo-preview"></div>
+        <div id="s-photo-warn" class="hint warn" style="display:none;">This photo looks like it wasn't just taken — please retake it live with the camera before submitting.</div>
+      </div>
+
+      <label>Staff name (required) — who is reporting this waste</label>
+      <input type="text" id="s-poster" placeholder="Full name of the person who wasted / is reporting this">
+
+      <label>Notes (optional)</label>
+      <textarea id="s-notes" placeholder="Reason for waste, shift, anything relevant…"></textarea>
+
+      <div class="cost-readout">
+        <div><div class="lbl">Estimated cost</div></div>
+        <div class="val" id="s-cost">AED 0.00</div>
+      </div>
+
+      <button class="btn" id="s-submit">Submit report</button>
+    </div>
+  </section>
+
+  <!-- ============ SUPERVISOR VIEW ============ -->
+  <section id="view-supervisor" class="view">
+    <div id="sup-login" class="loginbox card">
+      <h2>Supervisor login</h2>
+      <label>Username</label>
+      <input type="text" id="sup-username">
+      <label>Password</label>
+      <input type="password" id="sup-password">
+      <button class="btn" id="sup-login-btn">Log in</button>
+      <div class="hint">Access is scoped to your outlet only.</div>
+    </div>
+
+    <div id="sup-dashboard" style="display:none;">
+      <div class="logout-row">
+        <div><span class="badge" id="sup-outlet-badge"></span></div>
+        <button class="btn ghost small" id="sup-logout">Log out</button>
+      </div>
+
+      <div class="card">
+        <h2>Log waste — multiple items in one go</h2>
+        <p class="lead">Add as many items as you need, each with its own photo and quantity, then submit them all together.</p>
+
+        <label>Staff name (required) — who is entering this batch</label>
+        <input type="text" id="batch-poster" placeholder="Full name">
+
+        <div id="batch-rows"></div>
+        <button class="btn outline small" id="batch-add-row" type="button">+ Add another item</button>
+
+        <div class="cost-readout">
+          <div><div class="lbl">Batch total</div></div>
+          <div class="val" id="batch-total">AED 0.00</div>
+        </div>
+
+        <button class="btn" id="batch-submit">Submit all items</button>
+
+        <div id="batch-summary" class="summary-panel" style="display:none;"></div>
+      </div>
+
+      <div class="summary-strip" id="sup-summary"></div>
+      <div class="card">
+        <h2>Reports for your outlet</h2>
+        <div class="filters">
+          <div><label>From</label><input type="date" id="sup-from"></div>
+          <div><label>To</label><input type="date" id="sup-to"></div>
+          <div><label>Item</label><input type="text" id="sup-item" placeholder="Filter by item"></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="sup-filter">Apply</button></div>
+        </div>
+        <div class="scroll-x">
+          <table id="sup-table">
+            <thead><tr><th>Date</th><th>Item</th><th>Category</th><th>Qty</th><th>Cost</th><th>Staff</th><th>Photo</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ INVENTORY VIEW ============ -->
+  <section id="view-inventory" class="view">
+    <div id="inv-loggedout" class="card">
+      <h2>Inventory</h2>
+      <p class="lead">Log in via the <strong>Supervisor</strong> tab (to manage your outlet's inventory) or the <strong>Management</strong> tab (to review any outlet) to use this section.</p>
+    </div>
+
+    <div id="inv-sup-view" style="display:none;">
+      <div class="card">
+        <h2>Daily inventory — <span id="inv-sup-outlet-label"></span></h2>
+        <p class="lead">"Available" carries forward automatically: today's available = yesterday's available + today's received minus today's wasted. If a number looks wrong (e.g. this is your first day using the app, or a stock count doesn't match), just edit the "Opening" cell directly — that becomes the true starting point going forward.</p>
+        <div class="filters">
+          <div><label>Date</label><input type="date" id="inv-sup-date"></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="inv-sup-load">Load</button></div>
+        </div>
+        <div class="scroll-x">
+          <table id="inv-sup-table">
+            <thead><tr><th>Item</th><th>Unit</th><th>Opening</th><th>Item Received</th><th>Wasted</th><th>Available</th><th>Cost/Unit</th><th>Value</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="cost-readout">
+          <div><div class="lbl">Total inventory value</div></div>
+          <div class="val" id="inv-sup-total-value">AED 0.00</div>
+        </div>
+        <button class="btn" id="inv-sup-save">Save inventory</button>
+      </div>
+    </div>
+
+    <div id="inv-mgmt-view" style="display:none;">
+      <div class="card">
+        <h2>Daily inventory — review</h2>
+        <div class="filters">
+          <div><label>Outlet</label><select id="inv-mgmt-outlet"></select></div>
+          <div><label>Date</label><input type="date" id="inv-mgmt-date"></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="inv-mgmt-load">Load</button></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small outline" id="inv-mgmt-pdf">Download PDF</button></div>
+        </div>
+        <div class="scroll-x">
+          <table id="inv-mgmt-table">
+            <thead><tr><th>Item</th><th>Unit</th><th>Opening</th><th>Item Received</th><th>Wasted</th><th>Available</th><th>Cost/Unit</th><th>Value</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="cost-readout">
+          <div><div class="lbl">Total inventory value</div></div>
+          <div class="val" id="inv-mgmt-total-value">AED 0.00</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MANAGEMENT VIEW ============ -->
+  <section id="view-management" class="view">
+    <div id="mgmt-login" class="loginbox card">
+      <h2>Management login</h2>
+      <label>Email</label>
+      <input type="email" id="mgmt-email">
+      <label>Password</label>
+      <input type="password" id="mgmt-password">
+      <button class="btn" id="mgmt-login-btn">Log in</button>
+      <div class="hint">Review-only access — all outlets, all filters. Management does not submit waste reports.</div>
+    </div>
+
+    <div id="mgmt-dashboard" style="display:none;">
+      <div class="logout-row">
+        <div><span class="badge" id="mgmt-name-badge"></span></div>
+        <button class="btn ghost small" id="mgmt-logout">Log out</button>
+      </div>
+
+      <div class="card overview-card">
+        <div class="overview-header">
+          <h2>Overview</h2>
+          <div class="period-toggle" id="overview-period-toggle">
+            <button data-period="today" class="active">Today</button>
+            <button data-period="week">This Week</button>
+            <button data-period="month">This Month</button>
+            <button data-period="custom">Custom</button>
+          </div>
+        </div>
+        <div class="filters" id="overview-custom-range" style="display:none;">
+          <div><label>From</label><input type="date" id="overview-from"></div>
+          <div><label>To</label><input type="date" id="overview-to"></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="overview-custom-apply">Apply</button></div>
+        </div>
+        <div class="kpi-grid" id="overview-kpis"></div>
+
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>📈 Waste Cost — Last 6 Months</h3>
+            <div class="trend-bars" id="overview-trend"></div>
+          </div>
+          <div class="chart-card">
+            <h3>🏬 Outlet Analysis — who's responsible</h3>
+            <div id="overview-outlet-breakdown"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-grid">
+        <div class="card">
+          <h2>Filter reports</h2>
+          <div class="filters">
+            <div><label>Outlet</label><select id="mgmt-outlet"><option value="">All outlets</option></select></div>
+            <div><label>Category</label><input type="text" id="mgmt-category" placeholder="e.g. Meat"></div>
+            <div><label>Item</label><input type="text" id="mgmt-item" placeholder="Filter by item"></div>
+          </div>
+          <div class="filters">
+            <div><label>From</label><input type="date" id="mgmt-from"></div>
+            <div><label>To</label><input type="date" id="mgmt-to"></div>
+            <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="mgmt-filter">Apply filters</button></div>
+            <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small outline" id="mgmt-pdf">Download PDF</button></div>
+          </div>
+          <div class="scroll-x">
+            <table id="mgmt-table">
+              <thead><tr><th>Date</th><th>Outlet</th><th>Item</th><th>Category</th><th>Qty</th><th>Cost</th><th>Staff</th><th>Photo</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>🍽️ Category breakdown</h2>
+          <p class="lead">Based on the filtered results — click a category to drill into just those reports.</p>
+          <div id="mgmt-category-breakdown"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Add / update item cost list</h2>
+        <p class="lead">Cost is entered per base unit — per gram, per millilitre, or per piece — so staff never have to convert anything.</p>
+        <div class="row">
+          <div><label>Item name</label><input type="text" id="new-item-name"></div>
+          <div><label>Category</label><input type="text" id="new-item-cat"></div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Base unit</label>
+            <select id="new-item-unit">
+              <option value="g">Grams (g)</option>
+              <option value="kg">Kilograms (kg)</option>
+              <option value="ml">Millilitres (ml)</option>
+              <option value="l">Litres (l)</option>
+              <option value="pcs">Pieces (pcs)</option>
+              <option value="box">Box</option>
+              <option value="tray">Tray</option>
+              <option value="packet">Packet</option>
+              <option value="portion">Portion</option>
+              <option value="dozen">Dozen</option>
+            </select>
+          </div>
+          <div><label>Cost per base unit (AED)</label><input type="number" id="new-item-cost" step="0.0001" placeholder="e.g. 0.0285"></div>
+        </div>
+        <button class="btn small" id="add-item-btn" style="margin-top:14px;">Add item</button>
+      </div>
+
+      <div class="card">
+        <h2>Add outlet</h2>
+        <div class="row">
+          <div><label>Outlet name</label><input type="text" id="new-outlet-name"></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="add-outlet-btn">Add outlet</button></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Create a supervisor login</h2>
+        <p class="lead">Set up or reset a username/password for a supervisor at a specific outlet.</p>
+        <div class="row">
+          <div>
+            <label>Outlet</label>
+            <select id="new-sup-outlet"><option value="">Loading outlets…</option></select>
+          </div>
+          <div><label>Username</label><input type="text" id="new-sup-username" placeholder="e.g. louvre.sup"></div>
+          <div><label>Password</label><input type="text" id="new-sup-password" placeholder="Set a password"></div>
+        </div>
+        <button class="btn small" id="add-sup-btn" style="margin-top:14px;">Save supervisor login</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="modal-overlay" id="confirm-modal">
+  <div class="modal-box">
+    <h3>Please confirm before submitting</h3>
+    <p>Once submitted, this report <strong>cannot be edited or deleted</strong>. Please double-check the outlet, item, quantity, and photo before continuing.</p>
+    <div class="modal-actions">
+      <button class="btn secondary" id="confirm-cancel">Go back and check</button>
+      <button class="btn" id="confirm-ok">Yes, submit</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal-box wide">
+    <h3 id="detail-modal-title">Details</h3>
+    <div class="scroll-x" id="detail-modal-body" style="max-height:55vh; overflow-y:auto;"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" id="detail-modal-close">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_URL = "https://script.google.com/a/macros/aptitude.ae/s/AKfycbx8IbAjS3UKRwDljxhN_6UcPKXaFUEdr4vxzurAnR7KkWxxMkCoD_iGt1Aniq_3kIo/exec";
+
+async function api(action, payload) {
+  const res = await fetch(API_URL, {
+    method: "POST",
+    body: JSON.stringify({ action, payload: payload || {} })
   });
-  return { rows, grandTotal: Number(grandTotal.toFixed(2)), count: rows.length };
+  const json = await res.json();
+  if (!json.ok) throw new Error(json.error || "Request failed");
+  return json.data;
 }
 
-function createSingleReportRow(payload) {
-  // payload: outlet, itemName, category, unit ("g"|"ml"|"pcs"), qty, posterName,
-  //          notes, photoBase64, photoMimeType
-  const items = getItems();
-  let item = items.find(i => String(i.ItemName).toLowerCase() === String(payload.itemName).toLowerCase());
-
-  // Staff typed a brand-new item that isn't in the master list yet —
-  // create it automatically with cost 0 (management fills the real cost in later).
-  if (!item) {
-    item = addItem({
-      itemName: payload.itemName,
-      category: payload.category || "",
-      unit: payload.unit || "g",
-      costPerUnit: 0
-    });
-  }
-
-  const unit = item.Unit || payload.unit || "g";
-  const costPerUnit = Number(item.CostPerUnit) || 0;
-  const qty = Number(payload.qty) || 0;
-  const totalCost = qty * costPerUnit;
-
-  let photoUrl = "";
-  if (payload.photoBase64) {
-    photoUrl = savePhoto(payload.photoBase64, payload.photoMimeType || "image/jpeg");
-  }
-
-  // Auto-register outlet if it's a new one typed by staff
-  const outlets = getOutlets();
-  if (!outlets.find(o => o.OutletName === payload.outlet)) {
-    addOutlet({ name: payload.outlet });
-  }
-
-  const reportId = "RPT-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
-  appendRow("Reports", {
-    ReportID: reportId,
-    Timestamp: new Date(),
-    Outlet: payload.outlet,
-    ItemName: item.ItemName,
-    Category: payload.category || item.Category || "",
-    Qty: qty,
-    Unit: unit,
-    UnitCost: costPerUnit,
-    TotalCost: Number(totalCost.toFixed(2)),
-    PosterName: payload.posterName,
-    PhotoURL: photoUrl,
-    Notes: payload.notes || ""
-  }, ["ReportID", "Timestamp", "Outlet", "ItemName", "Category", "Qty", "Unit",
-      "UnitCost", "TotalCost", "PosterName", "PhotoURL", "Notes"]);
-
-  return { reportId, totalCost: Number(totalCost.toFixed(2)), unit, isNewItem: !Number(item.CostPerUnit) };
+function toast(msg, isErr) {
+  const t = document.createElement("div");
+  t.className = "toast" + (isErr ? " err" : "");
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3800);
 }
 
-function savePhoto(base64Data, mimeType) {
-  const folders = DriveApp.getFoldersByName(PHOTO_FOLDER_NAME);
-  const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(PHOTO_FOLDER_NAME);
-  const ext = mimeType.split("/")[1] || "jpg";
-  const bytes = Utilities.base64Decode(base64Data);
-  const blob = Utilities.newBlob(bytes, mimeType, "waste_" + Date.now() + "." + ext);
-  const file = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  return "https://drive.google.com/uc?id=" + file.getId();
+function fmtMoney(n) { return "AED " + Number(n || 0).toFixed(2); }
+function fmtDate(d) { return new Date(d).toLocaleString(); }
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
 }
 
-/* ---------------- AUTH ---------------- */
-
-function supervisorLogin(payload) {
-  const rows = readTable("Supervisors");
-  const match = rows.find(r =>
-    String(r.Username).toLowerCase() === String(payload.username).toLowerCase() &&
-    String(r.Password) === String(payload.password)
-  );
-  if (!match) throw new Error("Invalid supervisor username or password.");
-  return { role: "supervisor", outlet: match.Outlet, username: match.Username };
-}
-
-function managementLogin(payload) {
-  const rows = readTable("Management");
-  const match = rows.find(r =>
-    String(r.Email).toLowerCase() === String(payload.email).toLowerCase() &&
-    String(r.Password) === String(payload.password)
-  );
-  if (!match) throw new Error("Invalid management email or password.");
-  return { role: "management", name: match.Name, email: match.Email, title: match.Role };
-}
-
-function addManagementUser(payload) {
-  appendRow("Management", {
-    Name: payload.name, Email: payload.email, Password: payload.password, Role: payload.role
-  }, ["Name", "Email", "Password", "Role"]);
-  return { added: true };
-}
-
-function addSupervisor(payload) {
-  const sh = sheet("Supervisors");
-  const data = sh.getDataRange().getValues();
-  const headers = data[0];
-  const userCol = headers.indexOf("Username");
-  for (let r = 1; r < data.length; r++) {
-    if (String(data[r][userCol]).toLowerCase() === String(payload.username).toLowerCase()) {
-      sh.getRange(r + 1, headers.indexOf("Outlet") + 1).setValue(payload.outlet);
-      sh.getRange(r + 1, headers.indexOf("Password") + 1).setValue(payload.password);
-      return { updated: true };
-    }
-  }
-  appendRow("Supervisors", {
-    Outlet: payload.outlet, Username: payload.username, Password: payload.password
-  }, ["Outlet", "Username", "Password"]);
-  return { added: true };
-}
-
-function getSupervisorsList() {
-  // Deliberately omits passwords — this is for Management's read-only overview only.
-  return readTable("Supervisors").map(r => ({ Outlet: r.Outlet, Username: r.Username }));
-}
-
-/* ---------------- INVENTORY ---------------- */
-// InventoryReceipts sheet stores ONLY manual "Item Received" entries.
-// Wasted is always pulled live from Reports. Available/Closing stock is
-// computed by rolling forward day by day, so it self-corrects even if a
-// past day's data changes later — no stale numbers, no manual carry-forward.
-
-function toDateStr(d) {
-  const dt = (d instanceof Date) ? d : new Date(d);
-  return Utilities.formatDate(dt, Session.getScriptTimeZone(), "yyyy-MM-dd");
-}
-
-function dayName(dateStr) {
-  return Utilities.formatDate(new Date(dateStr), Session.getScriptTimeZone(), "EEEE");
-}
-
-function getInventory(payload) {
-  // payload: { date: "yyyy-MM-dd", outlet }
-  const date = payload.date;
-  const outlet = payload.outlet;
-  if (!date) throw new Error("date is required");
-  if (!outlet) throw new Error("outlet is required");
-
-  const items = getItems();
-  const receipts = readTable("InventoryReceipts").filter(r => r.Outlet === outlet);
-  const reports = readTable("Reports").filter(r => r.Outlet === outlet);
-  const overrides = readTable("InventoryOpeningOverrides").filter(r => r.Outlet === outlet);
-
-  const allDatesSet = new Set();
-  receipts.forEach(r => allDatesSet.add(toDateStr(r.Date)));
-  reports.forEach(r => allDatesSet.add(toDateStr(r.Timestamp)));
-  overrides.forEach(r => allDatesSet.add(toDateStr(r.Date)));
-  allDatesSet.add(date);
-  const allDates = Array.from(allDatesSet).filter(d => d <= date).sort();
-
-  return items.map(item => {
-    let opening = 0;
-    let rowForDate = null;
-    allDates.forEach(d => {
-      // An opening-balance override "resets" the ledger on that date — this is how
-      // a supervisor can start tracking a real physical count on any day (day zero),
-      // instead of the system assuming stock always starts at 0.
-      const override = overrides.find(o => toDateStr(o.Date) === d && o.ItemName === item.ItemName);
-      if (override) opening = Number(override.OpeningStock) || 0;
-
-      const received = receipts
-        .filter(r => toDateStr(r.Date) === d && r.ItemName === item.ItemName)
-        .reduce((s, r) => s + Number(r.Received || 0), 0);
-      const wasted = reports
-        .filter(r => toDateStr(r.Timestamp) === d && r.ItemName === item.ItemName)
-        .reduce((s, r) => s + Number(r.Qty || 0), 0);
-      const closing = opening + received - wasted;
-      if (d === date) {
-        rowForDate = {
-          Date: date, Day: dayName(date), ItemName: item.ItemName, Unit: item.Unit,
-          Opening: opening, Received: received, Wasted: wasted, Available: closing,
-          CostPerUnit: Number(item.CostPerUnit) || 0,
-          Value: Number(((opening + received - wasted) * (Number(item.CostPerUnit) || 0)).toFixed(2))
-        };
-      }
-      opening = closing;
-    });
-    return rowForDate || {
-      Date: date, Day: dayName(date), ItemName: item.ItemName, Unit: item.Unit,
-      Opening: 0, Received: 0, Wasted: 0, Available: 0,
-      CostPerUnit: Number(item.CostPerUnit) || 0, Value: 0
+function confirmSubmit() {
+  return new Promise(resolve => {
+    const modal = document.getElementById("confirm-modal");
+    modal.classList.add("active");
+    const okBtn = document.getElementById("confirm-ok");
+    const cancelBtn = document.getElementById("confirm-cancel");
+    const cleanup = (result) => {
+      modal.classList.remove("active");
+      okBtn.removeEventListener("click", onOk);
+      cancelBtn.removeEventListener("click", onCancel);
+      resolve(result);
     };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    okBtn.addEventListener("click", onOk);
+    cancelBtn.addEventListener("click", onCancel);
   });
 }
 
-function setOpeningStock(payload) {
-  // payload: date, outlet, itemName, qty — sets/resets the true physical count as of this date
-  const sh = sheet("InventoryOpeningOverrides");
-  const data = sh.getDataRange().getValues();
-  const headers = data[0];
-  const dateCol = headers.indexOf("Date");
-  const outletCol = headers.indexOf("Outlet");
-  const itemCol = headers.indexOf("ItemName");
-  const openCol = headers.indexOf("OpeningStock");
+function checkLivePhoto(file) {
+  if (!file || !file.lastModified) return true;
+  const ageMs = Date.now() - file.lastModified;
+  return ageMs < 1000 * 60 * 10;
+}
 
-  for (let r = 1; r < data.length; r++) {
-    if (toDateStr(data[r][dateCol]) === payload.date &&
-        data[r][outletCol] === payload.outlet &&
-        data[r][itemCol] === payload.itemName) {
-      sh.getRange(r + 1, openCol + 1).setValue(Number(payload.qty) || 0);
-      return { updated: true };
+document.querySelectorAll("nav.tabs button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav.tabs button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("view-" + btn.dataset.view).classList.add("active");
+    if (btn.dataset.view === "inventory") refreshInventoryTabVisibility();
+    document.querySelector("main").classList.toggle("wide", btn.dataset.view === "management");
+  });
+});
+
+function showDetailModal(title, bodyHtml) {
+  document.getElementById("detail-modal-title").textContent = title;
+  document.getElementById("detail-modal-body").innerHTML = bodyHtml;
+  document.getElementById("detail-modal").classList.add("active");
+}
+document.getElementById("detail-modal-close").addEventListener("click", () => {
+  document.getElementById("detail-modal").classList.remove("active");
+});
+
+function reportsTableHtml(rows) {
+  if (!rows.length) return `<p class="lead">No reports match this.</p>`;
+  return `<table><thead><tr><th>Date</th><th>Outlet</th><th>Item</th><th>Category</th><th>Qty</th><th>Cost</th><th>Staff</th></tr></thead><tbody>` +
+    rows.map(r => `
+      <tr>
+        <td>${fmtDate(r.Timestamp)}</td><td>${r.Outlet}</td><td>${r.ItemName}</td>
+        <td>${r.Category}</td><td>${r.Qty} ${r.Unit || ""}</td><td>${fmtMoney(r.TotalCost)}</td><td>${r.PosterName}</td>
+      </tr>
+    `).join("") + `</tbody></table>`;
+}
+
+let ITEMS = [];
+let OUTLETS = [];
+const UNIT_LABEL = { g: "grams", kg: "kilograms", ml: "millilitres", l: "litres", pcs: "pieces", box: "boxes", tray: "trays", packet: "packets", portion: "portions", dozen: "dozens" };
+
+function findItem(name) {
+  return ITEMS.find(i => i.ItemName.toLowerCase() === String(name || "").toLowerCase());
+}
+
+async function loadStaffData() {
+  try {
+    OUTLETS = await api("getOutlets");
+    const sel = document.getElementById("s-outlet");
+    sel.innerHTML = OUTLETS.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("")
+      + `<option value="__other__">+ Add new outlet…</option>`;
+
+    ITEMS = await api("getItems");
+    const itemSel = document.getElementById("s-item-select");
+    const prevValue = itemSel.value;
+    itemSel.innerHTML = `<option value="">Choose an item…</option>` +
+      ITEMS.map(i => `<option value="${i.ItemName}">${i.ItemName}</option>`).join("") +
+      `<option value="__other__">+ Add new item manually…</option>`;
+    if (prevValue && [...itemSel.options].some(o => o.value === prevValue)) itemSel.value = prevValue;
+  } catch (e) {
+    toast("Could not load outlets/items. Check API_URL. " + e.message, true);
+  }
+}
+loadStaffData();
+
+document.getElementById("s-outlet").addEventListener("change", (e) => {
+  document.getElementById("s-outlet-other").style.display =
+    e.target.value === "__other__" ? "block" : "none";
+});
+
+function getStaffItemName() {
+  const sel = document.getElementById("s-item-select").value;
+  return sel === "__other__" ? document.getElementById("s-item-new").value.trim() : sel;
+}
+
+function recalcCost() {
+  const name = getStaffItemName();
+  const item = findItem(name);
+  const unitSel = document.getElementById("s-unit");
+  const newItemHint = document.getElementById("s-newitem-hint");
+
+  if (item) {
+    document.getElementById("s-category").value = item.Category || "";
+    unitSel.value = item.Unit || "g";
+    newItemHint.style.display = "none";
+  } else {
+    newItemHint.style.display = name ? "block" : "none";
+  }
+
+  document.getElementById("s-unit-label").textContent = "Entering quantity in " + UNIT_LABEL[unitSel.value];
+
+  const qty = Number(document.getElementById("s-qty").value) || 0;
+  const costPerUnit = item ? Number(item.CostPerUnit) : 0;
+  document.getElementById("s-cost").textContent = fmtMoney(qty * costPerUnit);
+}
+document.getElementById("s-item-select").addEventListener("change", (e) => {
+  document.getElementById("s-item-other").style.display = e.target.value === "__other__" ? "block" : "none";
+  recalcCost();
+});
+document.getElementById("s-item-new").addEventListener("input", recalcCost);
+document.getElementById("s-qty").addEventListener("input", recalcCost);
+document.getElementById("s-unit").addEventListener("change", recalcCost);
+recalcCost();
+
+let photoBase64 = null, photoMime = null;
+document.getElementById("s-photo").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  photoMime = file.type;
+  document.getElementById("s-photo-warn").style.display = checkLivePhoto(file) ? "none" : "block";
+  const reader = new FileReader();
+  reader.onload = () => {
+    photoBase64 = reader.result.split(",")[1];
+    document.getElementById("s-photo-preview").innerHTML = `<img src="${reader.result}">`;
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById("s-submit").addEventListener("click", async () => {
+  const outletSel = document.getElementById("s-outlet").value;
+  const outlet = outletSel === "__other__"
+    ? document.getElementById("s-outlet-new").value.trim()
+    : outletSel;
+  const itemName = getStaffItemName();
+  const qty = Number(document.getElementById("s-qty").value);
+  const unit = document.getElementById("s-unit").value;
+  const posterName = document.getElementById("s-poster").value.trim();
+
+  if (!outlet) return toast("Please choose or type an outlet.", true);
+  if (!itemName) return toast("Please choose or type an item.", true);
+  if (!qty || qty <= 0) return toast("Please enter a quantity.", true);
+  if (!posterName) return toast("Staff name is required.", true);
+  if (!photoBase64) return toast("A live photo of the waste is required.", true);
+
+  const proceed = await confirmSubmit();
+  if (!proceed) return;
+
+  const btn = document.getElementById("s-submit");
+  btn.disabled = true; btn.textContent = "Submitting…";
+
+  try {
+    const data = await api("submitReport", {
+      outlet, itemName,
+      category: document.getElementById("s-category").value,
+      unit, qty, posterName,
+      notes: document.getElementById("s-notes").value,
+      photoBase64, photoMimeType: photoMime
+    });
+    toast(data.isNewItem
+      ? `Report submitted — new item added, cost pending from management`
+      : `Report submitted — cost ${fmtMoney(data.totalCost)}`);
+    document.getElementById("s-item-select").value = "";
+    document.getElementById("s-item-new").value = "";
+    document.getElementById("s-item-other").style.display = "none";
+    document.getElementById("s-category").value = "";
+    document.getElementById("s-qty").value = "";
+    document.getElementById("s-poster").value = "";
+    document.getElementById("s-notes").value = "";
+    document.getElementById("s-photo").value = "";
+    document.getElementById("s-photo-preview").innerHTML = "";
+    document.getElementById("s-photo-warn").style.display = "none";
+    document.getElementById("s-cost").textContent = fmtMoney(0);
+    photoBase64 = null; photoMime = null;
+    loadStaffData();
+    recalcCost();
+  } catch (e) {
+    toast("Submit failed: " + e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = "Submit report";
+  }
+});
+
+let supSession = null;
+let batchRowCount = 0;
+let batchRows = {};
+
+function newBatchRow() {
+  batchRowCount++;
+  const id = "row" + batchRowCount;
+  batchRows[id] = { photoBase64: null, photoMime: null };
+  const div = document.createElement("div");
+  div.className = "item-row";
+  div.id = id;
+  const itemOptions = `<option value="">Choose an item…</option>` +
+    ITEMS.map(i => `<option value="${i.ItemName}">${i.ItemName}</option>`).join("") +
+    `<option value="__other__">+ Add new item manually…</option>`;
+  div.innerHTML = `
+    <span class="rownum">Item ${batchRowCount}</span>
+    <button type="button" class="remove-row" data-row="${id}">Remove</button>
+    <label>Item</label>
+    <select class="b-item-select">${itemOptions}</select>
+    <div class="b-item-other" style="display:none; margin-top:8px;">
+      <input type="text" class="b-item-new" placeholder="Type the new item name">
+    </div>
+    <div class="row">
+      <div><label>Category</label><input type="text" class="b-category" placeholder="e.g. Meat"></div>
+      <div>
+        <label>Unit</label>
+        <select class="b-unit">
+          <option value="g">Grams (g)</option>
+          <option value="kg">Kilograms (kg)</option>
+          <option value="ml">Millilitres (ml)</option>
+          <option value="l">Litres (l)</option>
+          <option value="pcs">Pieces (pcs)</option>
+          <option value="box">Box</option>
+          <option value="tray">Tray</option>
+          <option value="packet">Packet</option>
+          <option value="portion">Portion</option>
+          <option value="dozen">Dozen</option>
+        </select>
+      </div>
+      <div><label>Quantity</label><input type="number" class="b-qty" min="0" step="1" placeholder="e.g. 250"></div>
+    </div>
+    <label>Photo — camera only</label>
+    <div class="camera-box">
+      <input type="file" accept="image/*" capture="environment" class="b-photo">
+      <div class="b-photo-preview"></div>
+      <div class="b-photo-warn hint warn" style="display:none;">This photo looks old — please retake it live.</div>
+    </div>
+    <label>Notes (optional)</label>
+    <textarea class="b-notes" placeholder="Reason for waste…"></textarea>
+    <div class="hint b-line-cost">Cost: AED 0.00</div>
+  `;
+  document.getElementById("batch-rows").appendChild(div);
+
+  const itemSelect = div.querySelector(".b-item-select");
+  const itemOtherWrap = div.querySelector(".b-item-other");
+  const itemNewInput = div.querySelector(".b-item-new");
+  const categoryInput = div.querySelector(".b-category");
+  const unitSelect = div.querySelector(".b-unit");
+  const qtyInput = div.querySelector(".b-qty");
+  const photoInput = div.querySelector(".b-photo");
+  const removeBtn = div.querySelector(".remove-row");
+
+  function currentLineItemName() {
+    return itemSelect.value === "__other__" ? itemNewInput.value.trim() : itemSelect.value;
+  }
+
+  function recalcLine() {
+    const item = findItem(currentLineItemName());
+    if (item) {
+      categoryInput.value = item.Category || "";
+      unitSelect.value = item.Unit || "g";
     }
+    const qty = Number(qtyInput.value) || 0;
+    const cost = item ? qty * Number(item.CostPerUnit) : 0;
+    div.querySelector(".b-line-cost").textContent = "Cost: " + fmtMoney(cost);
+    updateBatchTotal();
   }
-  appendRow("InventoryOpeningOverrides", {
-    Date: payload.date, Outlet: payload.outlet, ItemName: payload.itemName, OpeningStock: Number(payload.qty) || 0
-  }, ["Date", "Outlet", "ItemName", "OpeningStock"]);
-  return { added: true };
+  itemSelect.addEventListener("change", () => {
+    itemOtherWrap.style.display = itemSelect.value === "__other__" ? "block" : "none";
+    recalcLine();
+  });
+  itemNewInput.addEventListener("input", recalcLine);
+  qtyInput.addEventListener("input", recalcLine);
+  unitSelect.addEventListener("change", recalcLine);
+
+  photoInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    batchRows[id].photoMime = file.type;
+    div.querySelector(".b-photo-warn").style.display = checkLivePhoto(file) ? "none" : "block";
+    const reader = new FileReader();
+    reader.onload = () => {
+      batchRows[id].photoBase64 = reader.result.split(",")[1];
+      div.querySelector(".b-photo-preview").innerHTML = `<img src="${reader.result}">`;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  removeBtn.addEventListener("click", () => {
+    delete batchRows[id];
+    div.remove();
+    updateBatchTotal();
+  });
 }
 
-function setReceived(payload) {
-  // payload: date, outlet, itemName, qty
-  const sh = sheet("InventoryReceipts");
-  const data = sh.getDataRange().getValues();
-  const headers = data[0];
-  const dateCol = headers.indexOf("Date");
-  const outletCol = headers.indexOf("Outlet");
-  const itemCol = headers.indexOf("ItemName");
-  const recvCol = headers.indexOf("Received");
+function updateBatchTotal() {
+  let total = 0;
+  document.querySelectorAll("#batch-rows .item-row").forEach(div => {
+    const sel = div.querySelector(".b-item-select");
+    const itemName = sel.value === "__other__" ? div.querySelector(".b-item-new").value.trim() : sel.value;
+    const item = findItem(itemName);
+    const qty = Number(div.querySelector(".b-qty").value) || 0;
+    if (item) total += qty * Number(item.CostPerUnit);
+  });
+  document.getElementById("batch-total").textContent = fmtMoney(total);
+}
 
-  for (let r = 1; r < data.length; r++) {
-    if (toDateStr(data[r][dateCol]) === payload.date &&
-        data[r][outletCol] === payload.outlet &&
-        data[r][itemCol] === payload.itemName) {
-      sh.getRange(r + 1, recvCol + 1).setValue(Number(payload.qty) || 0);
-      return { updated: true };
+document.getElementById("batch-add-row").addEventListener("click", newBatchRow);
+
+document.getElementById("batch-submit").addEventListener("click", async () => {
+  const posterName = document.getElementById("batch-poster").value.trim();
+  if (!posterName) return toast("Staff name is required for this batch.", true);
+
+  const rows = document.querySelectorAll("#batch-rows .item-row");
+  if (rows.length === 0) return toast("Add at least one item.", true);
+
+  const items = [];
+  for (const div of rows) {
+    const sel = div.querySelector(".b-item-select");
+    const itemName = sel.value === "__other__" ? div.querySelector(".b-item-new").value.trim() : sel.value.trim();
+    const qty = Number(div.querySelector(".b-qty").value);
+    const unit = div.querySelector(".b-unit").value;
+    const category = div.querySelector(".b-category").value;
+    const notes = div.querySelector(".b-notes").value;
+    const rowId = div.id;
+    if (!itemName) return toast("Every row needs an item name.", true);
+    if (!qty || qty <= 0) return toast("Every row needs a quantity greater than 0.", true);
+    if (!batchRows[rowId] || !batchRows[rowId].photoBase64) return toast("Every row needs a live photo.", true);
+    items.push({
+      itemName, qty, unit, category, notes,
+      photoBase64: batchRows[rowId].photoBase64,
+      photoMimeType: batchRows[rowId].photoMime
+    });
+  }
+
+  const proceed = await confirmSubmit();
+  if (!proceed) return;
+
+  const btn = document.getElementById("batch-submit");
+  btn.disabled = true; btn.textContent = "Submitting…";
+  try {
+    const data = await api("submitBatchReport", { outlet: supSession.outlet, posterName, items });
+    const panel = document.getElementById("batch-summary");
+    panel.style.display = "block";
+    panel.innerHTML = `<h3>Submitted — ${data.count} item(s)</h3>` +
+      data.rows.map(r => `<div class="summary-line"><span>${r.itemName} — ${r.qty} ${r.unit}</span><span>${fmtMoney(r.totalCost)}</span></div>`).join("") +
+      `<div class="summary-total"><span>Grand total</span><span>${fmtMoney(data.grandTotal)}</span></div>`;
+    toast(`Batch submitted — ${data.count} item(s), total ${fmtMoney(data.grandTotal)}`);
+
+    document.getElementById("batch-rows").innerHTML = "";
+    batchRows = {}; batchRowCount = 0;
+    newBatchRow();
+    updateBatchTotal();
+    loadStaffData();
+    loadSupReports();
+  } catch (e) {
+    toast("Batch submit failed: " + e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = "Submit all items";
+  }
+});
+
+document.getElementById("sup-login-btn").addEventListener("click", async () => {
+  try {
+    supSession = await api("supervisorLogin", {
+      username: document.getElementById("sup-username").value,
+      password: document.getElementById("sup-password").value
+    });
+    document.getElementById("sup-login").style.display = "none";
+    document.getElementById("sup-dashboard").style.display = "block";
+    document.getElementById("sup-outlet-badge").textContent = supSession.outlet;
+    document.getElementById("batch-rows").innerHTML = "";
+    batchRows = {}; batchRowCount = 0;
+    newBatchRow();
+    loadSupReports();
+    refreshInventoryTabVisibility();
+  } catch (e) {
+    toast(e.message, true);
+  }
+});
+
+document.getElementById("sup-logout").addEventListener("click", () => {
+  supSession = null;
+  document.getElementById("sup-login").style.display = "block";
+  document.getElementById("sup-dashboard").style.display = "none";
+  document.getElementById("sup-username").value = "";
+  document.getElementById("sup-password").value = "";
+  refreshInventoryTabVisibility();
+});
+
+document.getElementById("sup-filter").addEventListener("click", loadSupReports);
+
+async function loadSupReports() {
+  if (!supSession) return;
+  const rows = await api("getReports", {
+    scopeOutlet: supSession.outlet,
+    itemName: document.getElementById("sup-item").value || undefined,
+    dateFrom: document.getElementById("sup-from").value || undefined,
+    dateTo: document.getElementById("sup-to").value || undefined
+  });
+  renderTable("sup-table", rows, false);
+  renderSummary("sup-summary", rows);
+}
+
+function refreshInventoryTabVisibility() {
+  document.getElementById("inv-loggedout").style.display = "none";
+  document.getElementById("inv-sup-view").style.display = "none";
+  document.getElementById("inv-mgmt-view").style.display = "none";
+
+  if (supSession) {
+    document.getElementById("inv-sup-view").style.display = "block";
+    document.getElementById("inv-sup-outlet-label").textContent = supSession.outlet;
+    if (!document.getElementById("inv-sup-date").value) document.getElementById("inv-sup-date").value = todayStr();
+    loadSupInventory();
+  } else if (mgmtSession) {
+    document.getElementById("inv-mgmt-view").style.display = "block";
+    if (!document.getElementById("inv-mgmt-date").value) document.getElementById("inv-mgmt-date").value = todayStr();
+    populateInvMgmtOutlets().then(loadMgmtInventory);
+  } else {
+    document.getElementById("inv-loggedout").style.display = "block";
+  }
+}
+
+async function loadSupInventory() {
+  const date = document.getElementById("inv-sup-date").value || todayStr();
+  try {
+    const rows = await api("getInventory", { date, outlet: supSession.outlet });
+    const tbody = document.querySelector("#inv-sup-table tbody");
+    tbody.innerHTML = rows.map(r => `
+      <tr data-item="${r.ItemName}" data-original-opening="${r.Opening}">
+        <td>${r.ItemName}</td>
+        <td>${r.Unit || "—"}</td>
+        <td><input type="number" class="inv-opening-input" value="${r.Opening}" style="max-width:90px;"></td>
+        <td><input type="number" class="inv-received-input" value="${r.Received}" style="max-width:90px;"></td>
+        <td>${r.Wasted}</td>
+        <td>${r.Available}</td>
+        <td>${fmtMoney(r.CostPerUnit)}</td>
+        <td class="cost">${fmtMoney(r.Value)}</td>
+      </tr>
+    `).join("");
+    const totalValue = rows.reduce((s, r) => s + Number(r.Value || 0), 0);
+    document.getElementById("inv-sup-total-value").textContent = fmtMoney(totalValue);
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+document.getElementById("inv-sup-load").addEventListener("click", loadSupInventory);
+
+document.getElementById("inv-sup-save").addEventListener("click", async () => {
+  const date = document.getElementById("inv-sup-date").value || todayStr();
+  const rowsEls = document.querySelectorAll("#inv-sup-table tbody tr");
+  try {
+    for (const tr of rowsEls) {
+      const itemName = tr.dataset.item;
+      const originalOpening = Number(tr.dataset.originalOpening) || 0;
+      const openingQty = Number(tr.querySelector(".inv-opening-input").value) || 0;
+      const receivedQty = Number(tr.querySelector(".inv-received-input").value) || 0;
+      if (openingQty !== originalOpening) {
+        await api("setOpeningStock", { date, outlet: supSession.outlet, itemName, qty: openingQty });
+      }
+      await api("setReceived", { date, outlet: supSession.outlet, itemName, qty: receivedQty });
     }
+    toast("Inventory saved.");
+    loadSupInventory();
+  } catch (e) {
+    toast(e.message, true);
   }
-  appendRow("InventoryReceipts", {
-    Date: payload.date, Outlet: payload.outlet, ItemName: payload.itemName, Received: Number(payload.qty) || 0
-  }, ["Date", "Outlet", "ItemName", "Received"]);
-  return { added: true };
+});
+
+async function populateInvMgmtOutlets() {
+  const outlets = await api("getOutlets");
+  document.getElementById("inv-mgmt-outlet").innerHTML =
+    outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
 }
 
-/* ---------------- REPORT QUERIES ---------------- */
+let lastInvMgmtRows = [];
+let lastInvMgmtMeta = { date: "", outlet: "" };
 
-function getReports(payload) {
-  // payload: { scopeOutlet (optional, restricts to one outlet for supervisors),
-  //            outlet, itemName, category, dateFrom, dateTo }
-  let rows = readTable("Reports");
-
-  if (payload.scopeOutlet) {
-    rows = rows.filter(r => r.Outlet === payload.scopeOutlet);
+async function loadMgmtInventory() {
+  const date = document.getElementById("inv-mgmt-date").value || todayStr();
+  const outlet = document.getElementById("inv-mgmt-outlet").value;
+  if (!outlet) return;
+  try {
+    const rows = await api("getInventory", { date, outlet });
+    lastInvMgmtRows = rows;
+    lastInvMgmtMeta = { date, outlet };
+    const tbody = document.querySelector("#inv-mgmt-table tbody");
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${r.ItemName}</td><td>${r.Unit || "—"}</td><td>${r.Opening}</td>
+        <td>${r.Received}</td><td>${r.Wasted}</td><td>${r.Available}</td>
+        <td>${fmtMoney(r.CostPerUnit)}</td><td class="cost">${fmtMoney(r.Value)}</td>
+      </tr>
+    `).join("");
+    const totalValue = rows.reduce((s, r) => s + Number(r.Value || 0), 0);
+    document.getElementById("inv-mgmt-total-value").textContent = fmtMoney(totalValue);
+  } catch (e) {
+    toast(e.message, true);
   }
-  if (payload.outlet) {
-    rows = rows.filter(r => r.Outlet === payload.outlet);
-  }
-  if (payload.itemName) {
-    rows = rows.filter(r => r.ItemName === payload.itemName);
-  }
-  if (payload.category) {
-    rows = rows.filter(r => r.Category === payload.category);
-  }
-  if (payload.dateFrom) {
-    const from = new Date(payload.dateFrom);
-    rows = rows.filter(r => new Date(r.Timestamp) >= from);
-  }
-  if (payload.dateTo) {
-    const to = new Date(payload.dateTo);
-    to.setHours(23, 59, 59, 999);
-    rows = rows.filter(r => new Date(r.Timestamp) <= to);
-  }
-
-  rows.sort((a, b) => new Date(b.Timestamp) - new Date(a.Timestamp));
-  return rows;
 }
+document.getElementById("inv-mgmt-load").addEventListener("click", loadMgmtInventory);
+
+document.getElementById("inv-mgmt-pdf").addEventListener("click", () => {
+  if (!lastInvMgmtRows.length) return toast("Load an outlet/date first.", true);
+  const win = window.open("", "_blank");
+  const totalValue = lastInvMgmtRows.reduce((s, r) => s + Number(r.Value || 0), 0);
+  const rowsHtml = lastInvMgmtRows.map(r => `
+    <tr>
+      <td>${r.ItemName}</td><td>${r.Unit || "—"}</td><td>${r.Opening}</td>
+      <td>${r.Received}</td><td>${r.Wasted}</td><td>${r.Available}</td>
+      <td>${fmtMoney(r.CostPerUnit)}</td><td>${fmtMoney(r.Value)}</td>
+    </tr>
+  `).join("");
+  win.document.write(`
+    <html><head><title>Inventory Report</title>
+    <style>
+      body{font-family:sans-serif; padding:24px; color:#1E2019;}
+      h1{font-size:18px;}
+      table{width:100%; border-collapse:collapse; font-size:12px;}
+      th,td{border:1px solid #ccc; padding:6px; text-align:left;}
+      th{background:#f0efe9;}
+    </style></head><body>
+    <h1>Aptitude Waste Portal — Inventory Report</h1>
+    <p>Outlet: ${lastInvMgmtMeta.outlet} · Date: ${lastInvMgmtMeta.date} · Generated: ${new Date().toLocaleString()} · Total inventory value: ${fmtMoney(totalValue)}</p>
+    <table><thead><tr><th>Item</th><th>Unit</th><th>Opening</th><th>Item Received</th><th>Wasted</th><th>Available</th><th>Cost/Unit</th><th>Value</th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table>
+    </body></html>
+  `);
+  win.document.close();
+  setTimeout(() => win.print(), 400);
+});
+
+let mgmtSession = null;
+let mgmtSupervisorsMap = {};
+let mgmtTotalOutlets = 0;
+let mgmtPendingPriceCount = 0;
+let mgmtPendingPriceItems = [];
+let overviewPeriod = "today";
+
+document.getElementById("mgmt-login-btn").addEventListener("click", async () => {
+  try {
+    mgmtSession = await api("managementLogin", {
+      email: document.getElementById("mgmt-email").value,
+      password: document.getElementById("mgmt-password").value
+    });
+    document.getElementById("mgmt-login").style.display = "none";
+    document.getElementById("mgmt-dashboard").style.display = "block";
+    document.getElementById("mgmt-name-badge").textContent = mgmtSession.name + " · " + mgmtSession.title;
+    const outlets = await api("getOutlets");
+    mgmtTotalOutlets = outlets.length;
+    document.getElementById("mgmt-outlet").innerHTML =
+      `<option value="">All outlets</option>` +
+      outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
+    document.getElementById("new-sup-outlet").innerHTML =
+      outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
+
+    const allItems = await api("getItems");
+    mgmtPendingPriceItems = allItems.filter(i => !Number(i.CostPerUnit)).map(i => i.ItemName);
+    mgmtPendingPriceCount = mgmtPendingPriceItems.length;
+
+    const supervisors = await api("getSupervisorsList");
+    mgmtSupervisorsMap = {};
+    supervisors.forEach(s => {
+      if (!mgmtSupervisorsMap[s.Outlet]) mgmtSupervisorsMap[s.Outlet] = [];
+      mgmtSupervisorsMap[s.Outlet].push(s.Username);
+    });
+
+    loadMgmtReports();
+    loadOverview();
+    refreshInventoryTabVisibility();
+  } catch (e) {
+    toast(e.message, true);
+  }
+});
+
+document.getElementById("mgmt-logout").addEventListener("click", () => {
+  mgmtSession = null;
+  document.getElementById("mgmt-login").style.display = "block";
+  document.getElementById("mgmt-dashboard").style.display = "none";
+  document.getElementById("mgmt-email").value = "";
+  document.getElementById("mgmt-password").value = "";
+  refreshInventoryTabVisibility();
+});
+
+document.getElementById("mgmt-filter").addEventListener("click", loadMgmtReports);
+
+let lastMgmtRows = [];
+
+async function loadMgmtReports() {
+  const rows = await api("getReports", {
+    outlet: document.getElementById("mgmt-outlet").value || undefined,
+    category: document.getElementById("mgmt-category").value || undefined,
+    itemName: document.getElementById("mgmt-item").value || undefined,
+    dateFrom: document.getElementById("mgmt-from").value || undefined,
+    dateTo: document.getElementById("mgmt-to").value || undefined
+  });
+  lastMgmtRows = rows;
+  renderTable("mgmt-table", rows, true);
+  renderCategoryBreakdown(rows);
+}
+
+function renderCategoryBreakdown(rows) {
+  const byCategory = {};
+  rows.forEach(r => {
+    const cat = r.Category || "Uncategorised";
+    if (!byCategory[cat]) byCategory[cat] = { cost: 0, count: 0 };
+    byCategory[cat].cost += Number(r.TotalCost || 0);
+    byCategory[cat].count += 1;
+  });
+  const list = Object.keys(byCategory).map(name => ({ name, ...byCategory[name] }))
+    .sort((a, b) => b.cost - a.cost);
+  const maxCost = Math.max(1, ...list.map(c => c.cost));
+
+  document.getElementById("mgmt-category-breakdown").innerHTML = list.length
+    ? list.map(c => `
+      <div class="obar-row clickable" onclick="document.getElementById('mgmt-category').value='${c.name.replace(/'/g, "\\'")}'; loadMgmtReports();">
+        <div><span class="oname">${c.name}</span><span class="osup">${c.count} report(s)</span></div>
+        <div class="obar-track"><div class="obar-fill" style="width:${(c.cost/maxCost*100).toFixed(0)}%"></div></div>
+        <div class="obar-value">${fmtMoney(c.cost)}</div>
+      </div>
+    `).join("")
+    : `<p class="lead">No reports match these filters.</p>`;
+}
+
+/* ---------------- MANAGEMENT OVERVIEW (period toggle + outlet/supervisor breakdown) ---------------- */
+function pad2(n) { return String(n).padStart(2, "0"); }
+function toISO(d) { return d.getFullYear() + "-" + pad2(d.getMonth()+1) + "-" + pad2(d.getDate()); }
+
+function periodRange(period) {
+  const now = new Date();
+  if (period === "today") {
+    return { from: toISO(now), to: toISO(now) };
+  }
+  if (period === "week") {
+    const day = now.getDay(); // 0=Sun..6=Sat
+    const diffToMonday = (day === 0 ? 6 : day - 1);
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - diffToMonday);
+    return { from: toISO(monday), to: toISO(now) };
+  }
+  if (period === "month") {
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { from: toISO(first), to: toISO(now) };
+  }
+  // custom
+  return {
+    from: document.getElementById("overview-from").value || toISO(now),
+    to: document.getElementById("overview-to").value || toISO(now)
+  };
+}
+
+document.querySelectorAll("#overview-period-toggle button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#overview-period-toggle button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    overviewPeriod = btn.dataset.period;
+    document.getElementById("overview-custom-range").style.display = overviewPeriod === "custom" ? "flex" : "none";
+    if (overviewPeriod !== "custom") loadOverview();
+  });
+});
+document.getElementById("overview-custom-apply").addEventListener("click", loadOverview);
+
+async function loadOverview() {
+  if (!mgmtSession) return;
+  const { from, to } = periodRange(overviewPeriod);
+  const rows = await api("getReports", { dateFrom: from, dateTo: to });
+  lastOverviewRows = rows;
+  lastOverviewLabel = document.querySelector("#overview-period-toggle button.active").textContent;
+
+  const totalCost = rows.reduce((s, r) => s + Number(r.TotalCost || 0), 0);
+  const totalReports = rows.length;
+  const grams = rows.filter(r => r.Unit === "g").reduce((s, r) => s + Number(r.Qty || 0), 0)
+              + rows.filter(r => r.Unit === "kg").reduce((s, r) => s + Number(r.Qty || 0), 0) * 1000;
+  const liquid = rows.filter(r => r.Unit === "ml").reduce((s, r) => s + Number(r.Qty || 0), 0)
+               + rows.filter(r => r.Unit === "l").reduce((s, r) => s + Number(r.Qty || 0), 0) * 1000;
+  const avgCost = totalReports ? totalCost / totalReports : 0;
+
+  const byItem = {};
+  rows.forEach(r => {
+    byItem[r.ItemName] = (byItem[r.ItemName] || 0) + Number(r.TotalCost || 0);
+  });
+  const topItemEntry = Object.entries(byItem).sort((a, b) => b[1] - a[1])[0];
+  const topItemLabel = topItemEntry ? topItemEntry[0] : "—";
+  const topItemCost = topItemEntry ? topItemEntry[1] : 0;
+
+  const reportingOutlets = new Set(rows.map(r => r.Outlet));
+  const outletsReporting = reportingOutlets.size;
+
+  document.getElementById("overview-kpis").innerHTML = `
+    <div class="kpi-card" onclick="openOverviewDetail('all')"><div class="kpi-icon i-cost">💰</div><div class="kpi-n">${fmtMoney(totalCost)}</div><div class="kpi-l">Total waste cost</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('all')"><div class="kpi-icon i-reports">📋</div><div class="kpi-n">${totalReports}</div><div class="kpi-l">Reports logged</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('weight')"><div class="kpi-icon i-weight">⚖️</div><div class="kpi-n">${(grams/1000).toFixed(2)} kg</div><div class="kpi-l">Total weight waste</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('liquid')"><div class="kpi-icon i-liquid">💧</div><div class="kpi-n">${(liquid/1000).toFixed(2)} L</div><div class="kpi-l">Total liquid waste</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('all')"><div class="kpi-icon i-avg">📊</div><div class="kpi-n">${fmtMoney(avgCost)}</div><div class="kpi-l">Average cost / report</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('topitem')"><div class="kpi-icon i-cost">🥇</div><div class="kpi-n" style="font-size:16px;">${topItemLabel}</div><div class="kpi-l">Top wasted item (${fmtMoney(topItemCost)})</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('outlets')"><div class="kpi-icon i-weight">🏬</div><div class="kpi-n">${outletsReporting}/${mgmtTotalOutlets}</div><div class="kpi-l">Outlets reporting this period</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('pending')"><div class="kpi-icon i-liquid">⏳</div><div class="kpi-n">${mgmtPendingPriceCount}</div><div class="kpi-l">Items awaiting a price</div></div>
+  `;
+
+  const byOutlet = {};
+  rows.forEach(r => {
+    if (!byOutlet[r.Outlet]) byOutlet[r.Outlet] = { cost: 0, count: 0 };
+    byOutlet[r.Outlet].cost += Number(r.TotalCost || 0);
+    byOutlet[r.Outlet].count += 1;
+  });
+  const outletList = Object.keys(byOutlet).map(name => ({ name, ...byOutlet[name] }))
+    .sort((a, b) => b.cost - a.cost);
+  const maxCost = Math.max(1, ...outletList.map(o => o.cost));
+
+  document.getElementById("overview-outlet-breakdown").innerHTML = outletList.length
+    ? outletList.map(o => `
+      <div class="obar-row clickable" onclick="openOverviewDetail('outlet', '${o.name.replace(/'/g, "\\'")}')">
+        <div>
+          <span class="oname">${o.name}</span>
+          <span class="osup">${(mgmtSupervisorsMap[o.name] || []).join(", ") || "No supervisor assigned"}</span>
+        </div>
+        <div class="obar-track"><div class="obar-fill" style="width:${(o.cost/maxCost*100).toFixed(0)}%"></div></div>
+        <div class="obar-value">${fmtMoney(o.cost)}</div>
+      </div>
+    `).join("")
+    : `<p class="lead">No waste reported in this period.</p>`;
+
+  loadTrendChart();
+}
+
+let lastOverviewRows = [];
+let lastOverviewLabel = "";
+
+function openOverviewDetail(kind, arg) {
+  if (kind === "all") {
+    showDetailModal(`All waste reports — ${lastOverviewLabel}`, reportsTableHtml(lastOverviewRows));
+  } else if (kind === "weight") {
+    const rows = lastOverviewRows.filter(r => r.Unit === "g" || r.Unit === "kg");
+    showDetailModal(`Weight-based waste (g/kg) — ${lastOverviewLabel}`, reportsTableHtml(rows));
+  } else if (kind === "liquid") {
+    const rows = lastOverviewRows.filter(r => r.Unit === "ml" || r.Unit === "l");
+    showDetailModal(`Liquid waste (ml/L) — ${lastOverviewLabel}`, reportsTableHtml(rows));
+  } else if (kind === "topitem") {
+    const byItem = {};
+    lastOverviewRows.forEach(r => { byItem[r.ItemName] = (byItem[r.ItemName] || 0) + Number(r.TotalCost || 0); });
+    const top = Object.entries(byItem).sort((a, b) => b[1] - a[1])[0];
+    if (!top) return showDetailModal("Top wasted item", `<p class="lead">No data for this period.</p>`);
+    const rows = lastOverviewRows.filter(r => r.ItemName === top[0]);
+    showDetailModal(`${top[0]} — ${lastOverviewLabel}`, reportsTableHtml(rows));
+  } else if (kind === "outlets") {
+    const reporting = new Set(lastOverviewRows.map(r => r.Outlet));
+    const allOutlets = OUTLETS.map(o => o.OutletName);
+    const html = `<table><thead><tr><th>Outlet</th><th>Status</th><th>Supervisor(s)</th></tr></thead><tbody>` +
+      allOutlets.map(name => `
+        <tr>
+          <td>${name}</td>
+          <td>${reporting.has(name) ? "✅ Reported" : "⚠️ No reports this period"}</td>
+          <td>${(mgmtSupervisorsMap[name] || []).join(", ") || "No supervisor assigned"}</td>
+        </tr>
+      `).join("") + `</tbody></table>`;
+    showDetailModal(`Outlets reporting — ${lastOverviewLabel}`, html);
+  } else if (kind === "pending") {
+    const html = mgmtPendingPriceItems.length
+      ? `<table><thead><tr><th>Item</th></tr></thead><tbody>` +
+        mgmtPendingPriceItems.map(name => `<tr><td>${name}</td></tr>`).join("") + `</tbody></table>`
+      : `<p class="lead">Every item currently has a price set.</p>`;
+    showDetailModal("Items awaiting a price", html);
+  } else if (kind === "outlet") {
+    const rows = lastOverviewRows.filter(r => r.Outlet === arg);
+    showDetailModal(`${arg} — ${lastOverviewLabel}`, reportsTableHtml(rows));
+  }
+}
+
+async function loadTrendChart() {
+  // Always the trailing 6 calendar months, independent of the period toggle above —
+  // gives management a stable trend view regardless of which period they're drilling into.
+  const now = new Date();
+  const monthStarts = [];
+  for (let i = 5; i >= 0; i--) {
+    monthStarts.push(new Date(now.getFullYear(), now.getMonth() - i, 1));
+  }
+  const rangeFrom = toISO(monthStarts[0]);
+  const rangeTo = toISO(now);
+  const rows = await api("getReports", { dateFrom: rangeFrom, dateTo: rangeTo });
+
+  const monthKey = (d) => d.getFullYear() + "-" + pad2(d.getMonth() + 1);
+  const totals = {};
+  monthStarts.forEach(m => totals[monthKey(m)] = 0);
+  rows.forEach(r => {
+    const d = new Date(r.Timestamp);
+    const key = monthKey(d);
+    if (totals[key] !== undefined) totals[key] += Number(r.TotalCost || 0);
+  });
+
+  const maxVal = Math.max(1, ...Object.values(totals));
+  const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  document.getElementById("overview-trend").innerHTML = monthStarts.map(m => {
+    const key = monthKey(m);
+    const val = totals[key];
+    const pct = Math.max(3, (val / maxVal * 100));
+    return `
+      <div class="trend-bar-wrap" title="${fmtMoney(val)}">
+        <div class="trend-bar" style="height:${pct}%"></div>
+        <div class="trend-label">${monthNames[m.getMonth()]}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+document.getElementById("mgmt-pdf").addEventListener("click", () => {
+  if (!lastMgmtRows.length) return toast("No reports to export — adjust filters first.", true);
+  const win = window.open("", "_blank");
+  const rowsHtml = lastMgmtRows.map(r => `
+    <tr>
+      <td>${fmtDate(r.Timestamp)}</td><td>${r.Outlet}</td><td>${r.ItemName}</td>
+      <td>${r.Category}</td><td>${r.Qty} ${r.Unit || ""}</td><td>${fmtMoney(r.TotalCost)}</td>
+      <td>${r.PosterName}</td>
+      <td>${r.PhotoURL ? `<img src="${r.PhotoURL}" style="width:60px;height:60px;object-fit:cover;">` : "—"}</td>
+    </tr>
+  `).join("");
+  const totalCost = lastMgmtRows.reduce((s, r) => s + Number(r.TotalCost || 0), 0);
+  win.document.write(`
+    <html><head><title>Waste Report</title>
+    <style>
+      body{font-family:sans-serif; padding:24px; color:#1E2019;}
+      h1{font-size:18px;}
+      table{width:100%; border-collapse:collapse; font-size:11px;}
+      th,td{border:1px solid #ccc; padding:6px; text-align:left;}
+      th{background:#f0efe9;}
+    </style></head><body>
+    <h1>Aptitude Waste Portal — Waste Report</h1>
+    <p>Generated: ${new Date().toLocaleString()} - ${lastMgmtRows.length} report(s) - Total cost: ${fmtMoney(totalCost)}</p>
+    <table><thead><tr><th>Date</th><th>Outlet</th><th>Item</th><th>Category</th><th>Qty</th><th>Cost</th><th>Staff</th><th>Photo</th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table>
+    </body></html>
+  `);
+  win.document.close();
+  setTimeout(() => win.print(), 400);
+});
+
+document.getElementById("add-item-btn").addEventListener("click", async () => {
+  try {
+    await api("addItem", {
+      itemName: document.getElementById("new-item-name").value,
+      category: document.getElementById("new-item-cat").value,
+      unit: document.getElementById("new-item-unit").value,
+      costPerUnit: Number(document.getElementById("new-item-cost").value)
+    });
+    toast("Item added.");
+    document.getElementById("new-item-name").value = "";
+    document.getElementById("new-item-cat").value = "";
+    document.getElementById("new-item-cost").value = "";
+    const allItems = await api("getItems");
+    mgmtPendingPriceItems = allItems.filter(i => !Number(i.CostPerUnit)).map(i => i.ItemName);
+    mgmtPendingPriceCount = mgmtPendingPriceItems.length;
+    loadOverview();
+  } catch (e) { toast(e.message, true); }
+});
+
+document.getElementById("add-outlet-btn").addEventListener("click", async () => {
+  try {
+    await api("addOutlet", { name: document.getElementById("new-outlet-name").value });
+    toast("Outlet added.");
+    document.getElementById("new-outlet-name").value = "";
+    const outlets = await api("getOutlets");
+    document.getElementById("mgmt-outlet").innerHTML =
+      `<option value="">All outlets</option>` +
+      outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
+    document.getElementById("new-sup-outlet").innerHTML =
+      outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
+  } catch (e) { toast(e.message, true); }
+});
+
+document.getElementById("add-sup-btn").addEventListener("click", async () => {
+  const outlet = document.getElementById("new-sup-outlet").value;
+  const username = document.getElementById("new-sup-username").value.trim();
+  const password = document.getElementById("new-sup-password").value.trim();
+  if (!outlet || !username || !password) return toast("Fill in outlet, username, and password.", true);
+  try {
+    await api("addSupervisor", { outlet, username, password });
+    toast(`Supervisor login saved for ${outlet}.`);
+    document.getElementById("new-sup-username").value = "";
+    document.getElementById("new-sup-password").value = "";
+  } catch (e) { toast(e.message, true); }
+});
+
+function renderTable(tableId, rows, withOutlet) {
+  const tbody = document.querySelector("#" + tableId + " tbody");
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${fmtDate(r.Timestamp)}</td>
+      ${withOutlet ? `<td>${r.Outlet}</td>` : ""}
+      <td>${r.ItemName}</td>
+      <td>${r.Category}</td>
+      <td>${r.Qty} ${r.Unit || ""}</td>
+      <td class="cost">${fmtMoney(r.TotalCost)}</td>
+      <td>${r.PosterName}</td>
+      <td>${r.PhotoURL ? `<a href="${r.PhotoURL}" target="_blank"><img class="thumb" src="${r.PhotoURL}"></a>` : "—"}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="8">No reports match these filters.</td></tr>`;
+}
+
+function renderSummary(elId, rows) {
+  const totalCost = rows.reduce((s, r) => s + Number(r.TotalCost || 0), 0);
+  const grams = rows.filter(r => r.Unit === "g").reduce((s, r) => s + Number(r.Qty || 0), 0);
+  const ml = rows.filter(r => r.Unit === "ml").reduce((s, r) => s + Number(r.Qty || 0), 0);
+  const pcs = rows.filter(r => r.Unit === "pcs").reduce((s, r) => s + Number(r.Qty || 0), 0);
+  document.getElementById(elId).innerHTML = `
+    <div class="stat"><div class="n">${rows.length}</div><div class="l">Reports</div></div>
+    <div class="stat"><div class="n">${(grams/1000).toFixed(2)} kg</div><div class="l">Total weight waste</div></div>
+    <div class="stat"><div class="n">${(ml/1000).toFixed(2)} L</div><div class="l">Total liquid waste</div></div>
+    <div class="stat"><div class="n">${pcs}</div><div class="l">Pieces wasted</div></div>
+    <div class="stat"><div class="n">${fmtMoney(totalCost)}</div><div class="l">Total cost</div></div>
+  `;
+}
+</script>
+</body>
+</html>
