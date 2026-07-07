@@ -139,6 +139,24 @@
   .summary-panel h3{margin:0 0 10px; font-size:15px; color:var(--moss-deep);}
   .summary-line{display:flex; justify-content:space-between; font-size:13.5px; padding:5px 0; border-bottom:1px dashed var(--line);}
   .summary-total{display:flex; justify-content:space-between; font-weight:700; padding-top:10px; font-family:var(--mono);}
+  .overview-card{background:linear-gradient(135deg,#232A1D,#1E2019); color:#fff; border:none;}
+  .overview-card h2, .overview-card h3{color:#fff;}
+  .overview-header{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:6px;}
+  .period-toggle{display:flex; gap:6px; flex-wrap:wrap;}
+  .period-toggle button{
+    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); color:#DFDCCF;
+    padding:7px 14px; border-radius:20px; font-size:12.5px; cursor:pointer; font-family:var(--sans);
+  }
+  .period-toggle button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
+  .overview-card .stat{background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.14);}
+  .overview-card .stat .n{color:#E9C46A;}
+  .overview-card .stat .l{color:#C7C4B6;}
+  .obar-row{display:grid; grid-template-columns:140px 1fr 110px; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid rgba(255,255,255,.1); font-size:13px;}
+  .obar-row .oname{font-weight:600;}
+  .obar-row .osup{font-size:11px; color:#B9B6A8; display:block;}
+  .obar-track{background:rgba(255,255,255,.08); border-radius:6px; height:14px; overflow:hidden;}
+  .obar-fill{background:linear-gradient(90deg,var(--moss),#8FA876); height:100%; border-radius:6px;}
+  .obar-value{font-family:var(--mono); text-align:right; color:#E9C46A; font-weight:600;}
   @media print {
     .topbar, nav.tabs, .no-print { display:none !important; }
     body{background:#fff;}
@@ -193,8 +211,15 @@
           <label>Unit</label>
           <select id="s-unit">
             <option value="g">Grams (g)</option>
+            <option value="kg">Kilograms (kg)</option>
             <option value="ml">Millilitres (ml)</option>
+            <option value="l">Litres (l)</option>
             <option value="pcs">Pieces (pcs)</option>
+            <option value="box">Box</option>
+            <option value="tray">Tray</option>
+            <option value="packet">Packet</option>
+            <option value="portion">Portion</option>
+            <option value="dozen">Dozen</option>
           </select>
         </div>
       </div>
@@ -342,6 +367,27 @@
         <div><span class="badge" id="mgmt-name-badge"></span></div>
         <button class="btn ghost small" id="mgmt-logout">Log out</button>
       </div>
+
+      <div class="card overview-card">
+        <div class="overview-header">
+          <h2>Overview</h2>
+          <div class="period-toggle" id="overview-period-toggle">
+            <button data-period="today" class="active">Today</button>
+            <button data-period="week">This Week</button>
+            <button data-period="month">This Month</button>
+            <button data-period="custom">Custom</button>
+          </div>
+        </div>
+        <div class="filters" id="overview-custom-range" style="display:none;">
+          <div><label style="color:#C7C4B6;">From</label><input type="date" id="overview-from"></div>
+          <div><label style="color:#C7C4B6;">To</label><input type="date" id="overview-to"></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="overview-custom-apply">Apply</button></div>
+        </div>
+        <div class="summary-strip" id="overview-kpis"></div>
+        <h3 style="margin-top:22px; margin-bottom:10px;">Outlet-wise waste — who's responsible</h3>
+        <div id="overview-outlet-breakdown"></div>
+      </div>
+
       <div class="summary-strip" id="mgmt-summary"></div>
       <div class="card">
         <h2>Filter reports</h2>
@@ -376,8 +422,15 @@
             <label>Base unit</label>
             <select id="new-item-unit">
               <option value="g">Grams (g)</option>
+              <option value="kg">Kilograms (kg)</option>
               <option value="ml">Millilitres (ml)</option>
+              <option value="l">Litres (l)</option>
               <option value="pcs">Pieces (pcs)</option>
+              <option value="box">Box</option>
+              <option value="tray">Tray</option>
+              <option value="packet">Packet</option>
+              <option value="portion">Portion</option>
+              <option value="dozen">Dozen</option>
             </select>
           </div>
           <div><label>Cost per base unit (AED)</label><input type="number" id="new-item-cost" step="0.0001" placeholder="e.g. 0.0285"></div>
@@ -487,7 +540,7 @@ document.querySelectorAll("nav.tabs button").forEach(btn => {
 
 let ITEMS = [];
 let OUTLETS = [];
-const UNIT_LABEL = { g: "grams", ml: "millilitres", pcs: "pieces" };
+const UNIT_LABEL = { g: "grams", kg: "kilograms", ml: "millilitres", l: "litres", pcs: "pieces", box: "boxes", tray: "trays", packet: "packets", portion: "portions", dozen: "dozens" };
 
 function findItem(name) {
   return ITEMS.find(i => i.ItemName.toLowerCase() === String(name || "").toLowerCase());
@@ -630,8 +683,15 @@ function newBatchRow() {
         <label>Unit</label>
         <select class="b-unit">
           <option value="g">Grams (g)</option>
+          <option value="kg">Kilograms (kg)</option>
           <option value="ml">Millilitres (ml)</option>
+          <option value="l">Litres (l)</option>
           <option value="pcs">Pieces (pcs)</option>
+          <option value="box">Box</option>
+          <option value="tray">Tray</option>
+          <option value="packet">Packet</option>
+          <option value="portion">Portion</option>
+          <option value="dozen">Dozen</option>
         </select>
       </div>
       <div><label>Quantity</label><input type="number" class="b-qty" min="0" step="1" placeholder="e.g. 250"></div>
@@ -882,6 +942,8 @@ async function loadMgmtInventory() {
 document.getElementById("inv-mgmt-load").addEventListener("click", loadMgmtInventory);
 
 let mgmtSession = null;
+let mgmtSupervisorsMap = {};
+let overviewPeriod = "today";
 
 document.getElementById("mgmt-login-btn").addEventListener("click", async () => {
   try {
@@ -898,7 +960,16 @@ document.getElementById("mgmt-login-btn").addEventListener("click", async () => 
       outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
     document.getElementById("new-sup-outlet").innerHTML =
       outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
+
+    const supervisors = await api("getSupervisorsList");
+    mgmtSupervisorsMap = {};
+    supervisors.forEach(s => {
+      if (!mgmtSupervisorsMap[s.Outlet]) mgmtSupervisorsMap[s.Outlet] = [];
+      mgmtSupervisorsMap[s.Outlet].push(s.Username);
+    });
+
     loadMgmtReports();
+    loadOverview();
     refreshInventoryTabVisibility();
   } catch (e) {
     toast(e.message, true);
@@ -929,6 +1000,89 @@ async function loadMgmtReports() {
   lastMgmtRows = rows;
   renderTable("mgmt-table", rows, true);
   renderSummary("mgmt-summary", rows);
+}
+
+/* ---------------- MANAGEMENT OVERVIEW (period toggle + outlet/supervisor breakdown) ---------------- */
+function pad2(n) { return String(n).padStart(2, "0"); }
+function toISO(d) { return d.getFullYear() + "-" + pad2(d.getMonth()+1) + "-" + pad2(d.getDate()); }
+
+function periodRange(period) {
+  const now = new Date();
+  if (period === "today") {
+    return { from: toISO(now), to: toISO(now) };
+  }
+  if (period === "week") {
+    const day = now.getDay(); // 0=Sun..6=Sat
+    const diffToMonday = (day === 0 ? 6 : day - 1);
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - diffToMonday);
+    return { from: toISO(monday), to: toISO(now) };
+  }
+  if (period === "month") {
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    return { from: toISO(first), to: toISO(now) };
+  }
+  // custom
+  return {
+    from: document.getElementById("overview-from").value || toISO(now),
+    to: document.getElementById("overview-to").value || toISO(now)
+  };
+}
+
+document.querySelectorAll("#overview-period-toggle button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#overview-period-toggle button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    overviewPeriod = btn.dataset.period;
+    document.getElementById("overview-custom-range").style.display = overviewPeriod === "custom" ? "flex" : "none";
+    if (overviewPeriod !== "custom") loadOverview();
+  });
+});
+document.getElementById("overview-custom-apply").addEventListener("click", loadOverview);
+
+async function loadOverview() {
+  if (!mgmtSession) return;
+  const { from, to } = periodRange(overviewPeriod);
+  const rows = await api("getReports", { dateFrom: from, dateTo: to });
+
+  const totalCost = rows.reduce((s, r) => s + Number(r.TotalCost || 0), 0);
+  const totalReports = rows.length;
+  const grams = rows.filter(r => r.Unit === "g").reduce((s, r) => s + Number(r.Qty || 0), 0)
+              + rows.filter(r => r.Unit === "kg").reduce((s, r) => s + Number(r.Qty || 0), 0) * 1000;
+  const liquid = rows.filter(r => r.Unit === "ml").reduce((s, r) => s + Number(r.Qty || 0), 0)
+               + rows.filter(r => r.Unit === "l").reduce((s, r) => s + Number(r.Qty || 0), 0) * 1000;
+  const avgCost = totalReports ? totalCost / totalReports : 0;
+
+  document.getElementById("overview-kpis").innerHTML = `
+    <div class="stat"><div class="n">${fmtMoney(totalCost)}</div><div class="l">Total waste cost</div></div>
+    <div class="stat"><div class="n">${totalReports}</div><div class="l">Reports logged</div></div>
+    <div class="stat"><div class="n">${(grams/1000).toFixed(2)} kg</div><div class="l">Total weight waste</div></div>
+    <div class="stat"><div class="n">${(liquid/1000).toFixed(2)} L</div><div class="l">Total liquid waste</div></div>
+    <div class="stat"><div class="n">${fmtMoney(avgCost)}</div><div class="l">Average cost / report</div></div>
+  `;
+
+  const byOutlet = {};
+  rows.forEach(r => {
+    if (!byOutlet[r.Outlet]) byOutlet[r.Outlet] = { cost: 0, count: 0 };
+    byOutlet[r.Outlet].cost += Number(r.TotalCost || 0);
+    byOutlet[r.Outlet].count += 1;
+  });
+  const outletList = Object.keys(byOutlet).map(name => ({ name, ...byOutlet[name] }))
+    .sort((a, b) => b.cost - a.cost);
+  const maxCost = Math.max(1, ...outletList.map(o => o.cost));
+
+  document.getElementById("overview-outlet-breakdown").innerHTML = outletList.length
+    ? outletList.map(o => `
+      <div class="obar-row">
+        <div>
+          <span class="oname">${o.name}</span>
+          <span class="osup">${(mgmtSupervisorsMap[o.name] || []).join(", ") || "No supervisor assigned"}</span>
+        </div>
+        <div class="obar-track"><div class="obar-fill" style="width:${(o.cost/maxCost*100).toFixed(0)}%"></div></div>
+        <div class="obar-value">${fmtMoney(o.cost)}</div>
+      </div>
+    `).join("")
+    : `<p class="lead" style="color:#C7C4B6;">No waste reported in this period.</p>`;
 }
 
 document.getElementById("mgmt-pdf").addEventListener("click", () => {
