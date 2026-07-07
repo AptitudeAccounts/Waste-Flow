@@ -42,7 +42,8 @@
     font-family:var(--sans); transition:.15s;
   }
   nav.tabs button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
-  main{max-width:920px; margin:0 auto; padding:26px 18px 80px;}
+  main{max-width:920px; margin:0 auto; padding:26px 18px 80px; transition:max-width .2s;}
+  main.wide{max-width:1360px;}
   .view{display:none;}
   .view.active{display:block; animation:fade .25s ease;}
   @keyframes fade{from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none}}
@@ -148,7 +149,15 @@
   }
   .period-toggle button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
   .kpi-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:14px; margin-top:16px;}
-  .kpi-card{background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:16px;}
+  .kpi-card{background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:16px; cursor:pointer; transition:.15s;}
+  .kpi-card:hover{border-color:var(--moss); box-shadow:0 4px 14px rgba(0,0,0,.07); transform:translateY(-1px);}
+  .obar-row.clickable{cursor:pointer; transition:.15s;}
+  .obar-row.clickable:hover{background:#F7F6F0;}
+  .modal-box.wide{max-width:760px;}
+  .modal-box.wide table{font-size:12.5px;}
+  .modal-box.wide th, .modal-box.wide td{padding:7px 8px;}
+  .dashboard-grid{display:grid; grid-template-columns:2fr 1fr; gap:16px;}
+  @media (max-width:900px){ .dashboard-grid{grid-template-columns:1fr;} }
   .kpi-icon{width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; margin-bottom:12px;}
   .kpi-icon.i-cost{background:#FBEFE1;}
   .kpi-icon.i-reports{background:#E7ECE0;}
@@ -412,25 +421,32 @@
         </div>
       </div>
 
-      <div class="summary-strip" id="mgmt-summary"></div>
-      <div class="card">
-        <h2>Filter reports</h2>
-        <div class="filters">
-          <div><label>Outlet</label><select id="mgmt-outlet"><option value="">All outlets</option></select></div>
-          <div><label>Category</label><input type="text" id="mgmt-category" placeholder="e.g. Meat"></div>
-          <div><label>Item</label><input type="text" id="mgmt-item" placeholder="Filter by item"></div>
+      <div class="dashboard-grid">
+        <div class="card">
+          <h2>Filter reports</h2>
+          <div class="filters">
+            <div><label>Outlet</label><select id="mgmt-outlet"><option value="">All outlets</option></select></div>
+            <div><label>Category</label><input type="text" id="mgmt-category" placeholder="e.g. Meat"></div>
+            <div><label>Item</label><input type="text" id="mgmt-item" placeholder="Filter by item"></div>
+          </div>
+          <div class="filters">
+            <div><label>From</label><input type="date" id="mgmt-from"></div>
+            <div><label>To</label><input type="date" id="mgmt-to"></div>
+            <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="mgmt-filter">Apply filters</button></div>
+            <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small outline" id="mgmt-pdf">Download PDF</button></div>
+          </div>
+          <div class="scroll-x">
+            <table id="mgmt-table">
+              <thead><tr><th>Date</th><th>Outlet</th><th>Item</th><th>Category</th><th>Qty</th><th>Cost</th><th>Staff</th><th>Photo</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
-        <div class="filters">
-          <div><label>From</label><input type="date" id="mgmt-from"></div>
-          <div><label>To</label><input type="date" id="mgmt-to"></div>
-          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="mgmt-filter">Apply filters</button></div>
-          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small outline" id="mgmt-pdf">Download PDF</button></div>
-        </div>
-        <div class="scroll-x">
-          <table id="mgmt-table">
-            <thead><tr><th>Date</th><th>Outlet</th><th>Item</th><th>Category</th><th>Qty</th><th>Cost</th><th>Staff</th><th>Photo</th></tr></thead>
-            <tbody></tbody>
-          </table>
+
+        <div class="card">
+          <h2>🍽️ Category breakdown</h2>
+          <p class="lead">Based on the filtered results — click a category to drill into just those reports.</p>
+          <div id="mgmt-category-breakdown"></div>
         </div>
       </div>
 
@@ -499,6 +515,16 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal-box wide">
+    <h3 id="detail-modal-title">Details</h3>
+    <div class="scroll-x" id="detail-modal-body" style="max-height:55vh; overflow-y:auto;"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" id="detail-modal-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const API_URL = "https://script.google.com/a/macros/aptitude.ae/s/AKfycbx8IbAjS3UKRwDljxhN_6UcPKXaFUEdr4vxzurAnR7KkWxxMkCoD_iGt1Aniq_3kIo/exec";
 
@@ -559,8 +585,29 @@ document.querySelectorAll("nav.tabs button").forEach(btn => {
     btn.classList.add("active");
     document.getElementById("view-" + btn.dataset.view).classList.add("active");
     if (btn.dataset.view === "inventory") refreshInventoryTabVisibility();
+    document.querySelector("main").classList.toggle("wide", btn.dataset.view === "management");
   });
 });
+
+function showDetailModal(title, bodyHtml) {
+  document.getElementById("detail-modal-title").textContent = title;
+  document.getElementById("detail-modal-body").innerHTML = bodyHtml;
+  document.getElementById("detail-modal").classList.add("active");
+}
+document.getElementById("detail-modal-close").addEventListener("click", () => {
+  document.getElementById("detail-modal").classList.remove("active");
+});
+
+function reportsTableHtml(rows) {
+  if (!rows.length) return `<p class="lead">No reports match this.</p>`;
+  return `<table><thead><tr><th>Date</th><th>Outlet</th><th>Item</th><th>Category</th><th>Qty</th><th>Cost</th><th>Staff</th></tr></thead><tbody>` +
+    rows.map(r => `
+      <tr>
+        <td>${fmtDate(r.Timestamp)}</td><td>${r.Outlet}</td><td>${r.ItemName}</td>
+        <td>${r.Category}</td><td>${r.Qty} ${r.Unit || ""}</td><td>${fmtMoney(r.TotalCost)}</td><td>${r.PosterName}</td>
+      </tr>
+    `).join("") + `</tbody></table>`;
+}
 
 let ITEMS = [];
 let OUTLETS = [];
@@ -1002,6 +1049,7 @@ let mgmtSession = null;
 let mgmtSupervisorsMap = {};
 let mgmtTotalOutlets = 0;
 let mgmtPendingPriceCount = 0;
+let mgmtPendingPriceItems = [];
 let overviewPeriod = "today";
 
 document.getElementById("mgmt-login-btn").addEventListener("click", async () => {
@@ -1022,7 +1070,8 @@ document.getElementById("mgmt-login-btn").addEventListener("click", async () => 
       outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
 
     const allItems = await api("getItems");
-    mgmtPendingPriceCount = allItems.filter(i => !Number(i.CostPerUnit)).length;
+    mgmtPendingPriceItems = allItems.filter(i => !Number(i.CostPerUnit)).map(i => i.ItemName);
+    mgmtPendingPriceCount = mgmtPendingPriceItems.length;
 
     const supervisors = await api("getSupervisorsList");
     mgmtSupervisorsMap = {};
@@ -1062,7 +1111,30 @@ async function loadMgmtReports() {
   });
   lastMgmtRows = rows;
   renderTable("mgmt-table", rows, true);
-  renderSummary("mgmt-summary", rows);
+  renderCategoryBreakdown(rows);
+}
+
+function renderCategoryBreakdown(rows) {
+  const byCategory = {};
+  rows.forEach(r => {
+    const cat = r.Category || "Uncategorised";
+    if (!byCategory[cat]) byCategory[cat] = { cost: 0, count: 0 };
+    byCategory[cat].cost += Number(r.TotalCost || 0);
+    byCategory[cat].count += 1;
+  });
+  const list = Object.keys(byCategory).map(name => ({ name, ...byCategory[name] }))
+    .sort((a, b) => b.cost - a.cost);
+  const maxCost = Math.max(1, ...list.map(c => c.cost));
+
+  document.getElementById("mgmt-category-breakdown").innerHTML = list.length
+    ? list.map(c => `
+      <div class="obar-row clickable" onclick="document.getElementById('mgmt-category').value='${c.name.replace(/'/g, "\\'")}'; loadMgmtReports();">
+        <div><span class="oname">${c.name}</span><span class="osup">${c.count} report(s)</span></div>
+        <div class="obar-track"><div class="obar-fill" style="width:${(c.cost/maxCost*100).toFixed(0)}%"></div></div>
+        <div class="obar-value">${fmtMoney(c.cost)}</div>
+      </div>
+    `).join("")
+    : `<p class="lead">No reports match these filters.</p>`;
 }
 
 /* ---------------- MANAGEMENT OVERVIEW (period toggle + outlet/supervisor breakdown) ---------------- */
@@ -1107,6 +1179,8 @@ async function loadOverview() {
   if (!mgmtSession) return;
   const { from, to } = periodRange(overviewPeriod);
   const rows = await api("getReports", { dateFrom: from, dateTo: to });
+  lastOverviewRows = rows;
+  lastOverviewLabel = document.querySelector("#overview-period-toggle button.active").textContent;
 
   const totalCost = rows.reduce((s, r) => s + Number(r.TotalCost || 0), 0);
   const totalReports = rows.length;
@@ -1124,17 +1198,18 @@ async function loadOverview() {
   const topItemLabel = topItemEntry ? topItemEntry[0] : "—";
   const topItemCost = topItemEntry ? topItemEntry[1] : 0;
 
-  const outletsReporting = new Set(rows.map(r => r.Outlet)).size;
+  const reportingOutlets = new Set(rows.map(r => r.Outlet));
+  const outletsReporting = reportingOutlets.size;
 
   document.getElementById("overview-kpis").innerHTML = `
-    <div class="kpi-card"><div class="kpi-icon i-cost">💰</div><div class="kpi-n">${fmtMoney(totalCost)}</div><div class="kpi-l">Total waste cost</div></div>
-    <div class="kpi-card"><div class="kpi-icon i-reports">📋</div><div class="kpi-n">${totalReports}</div><div class="kpi-l">Reports logged</div></div>
-    <div class="kpi-card"><div class="kpi-icon i-weight">⚖️</div><div class="kpi-n">${(grams/1000).toFixed(2)} kg</div><div class="kpi-l">Total weight waste</div></div>
-    <div class="kpi-card"><div class="kpi-icon i-liquid">💧</div><div class="kpi-n">${(liquid/1000).toFixed(2)} L</div><div class="kpi-l">Total liquid waste</div></div>
-    <div class="kpi-card"><div class="kpi-icon i-avg">📊</div><div class="kpi-n">${fmtMoney(avgCost)}</div><div class="kpi-l">Average cost / report</div></div>
-    <div class="kpi-card"><div class="kpi-icon i-cost">🥇</div><div class="kpi-n" style="font-size:16px;">${topItemLabel}</div><div class="kpi-l">Top wasted item (${fmtMoney(topItemCost)})</div></div>
-    <div class="kpi-card"><div class="kpi-icon i-weight">🏬</div><div class="kpi-n">${outletsReporting}/${mgmtTotalOutlets}</div><div class="kpi-l">Outlets reporting this period</div></div>
-    <div class="kpi-card"><div class="kpi-icon i-liquid">⏳</div><div class="kpi-n">${mgmtPendingPriceCount}</div><div class="kpi-l">Items awaiting a price</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('all')"><div class="kpi-icon i-cost">💰</div><div class="kpi-n">${fmtMoney(totalCost)}</div><div class="kpi-l">Total waste cost</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('all')"><div class="kpi-icon i-reports">📋</div><div class="kpi-n">${totalReports}</div><div class="kpi-l">Reports logged</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('weight')"><div class="kpi-icon i-weight">⚖️</div><div class="kpi-n">${(grams/1000).toFixed(2)} kg</div><div class="kpi-l">Total weight waste</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('liquid')"><div class="kpi-icon i-liquid">💧</div><div class="kpi-n">${(liquid/1000).toFixed(2)} L</div><div class="kpi-l">Total liquid waste</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('all')"><div class="kpi-icon i-avg">📊</div><div class="kpi-n">${fmtMoney(avgCost)}</div><div class="kpi-l">Average cost / report</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('topitem')"><div class="kpi-icon i-cost">🥇</div><div class="kpi-n" style="font-size:16px;">${topItemLabel}</div><div class="kpi-l">Top wasted item (${fmtMoney(topItemCost)})</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('outlets')"><div class="kpi-icon i-weight">🏬</div><div class="kpi-n">${outletsReporting}/${mgmtTotalOutlets}</div><div class="kpi-l">Outlets reporting this period</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('pending')"><div class="kpi-icon i-liquid">⏳</div><div class="kpi-n">${mgmtPendingPriceCount}</div><div class="kpi-l">Items awaiting a price</div></div>
   `;
 
   const byOutlet = {};
@@ -1149,7 +1224,7 @@ async function loadOverview() {
 
   document.getElementById("overview-outlet-breakdown").innerHTML = outletList.length
     ? outletList.map(o => `
-      <div class="obar-row">
+      <div class="obar-row clickable" onclick="openOverviewDetail('outlet', '${o.name.replace(/'/g, "\\'")}')">
         <div>
           <span class="oname">${o.name}</span>
           <span class="osup">${(mgmtSupervisorsMap[o.name] || []).join(", ") || "No supervisor assigned"}</span>
@@ -1161,6 +1236,49 @@ async function loadOverview() {
     : `<p class="lead">No waste reported in this period.</p>`;
 
   loadTrendChart();
+}
+
+let lastOverviewRows = [];
+let lastOverviewLabel = "";
+
+function openOverviewDetail(kind, arg) {
+  if (kind === "all") {
+    showDetailModal(`All waste reports — ${lastOverviewLabel}`, reportsTableHtml(lastOverviewRows));
+  } else if (kind === "weight") {
+    const rows = lastOverviewRows.filter(r => r.Unit === "g" || r.Unit === "kg");
+    showDetailModal(`Weight-based waste (g/kg) — ${lastOverviewLabel}`, reportsTableHtml(rows));
+  } else if (kind === "liquid") {
+    const rows = lastOverviewRows.filter(r => r.Unit === "ml" || r.Unit === "l");
+    showDetailModal(`Liquid waste (ml/L) — ${lastOverviewLabel}`, reportsTableHtml(rows));
+  } else if (kind === "topitem") {
+    const byItem = {};
+    lastOverviewRows.forEach(r => { byItem[r.ItemName] = (byItem[r.ItemName] || 0) + Number(r.TotalCost || 0); });
+    const top = Object.entries(byItem).sort((a, b) => b[1] - a[1])[0];
+    if (!top) return showDetailModal("Top wasted item", `<p class="lead">No data for this period.</p>`);
+    const rows = lastOverviewRows.filter(r => r.ItemName === top[0]);
+    showDetailModal(`${top[0]} — ${lastOverviewLabel}`, reportsTableHtml(rows));
+  } else if (kind === "outlets") {
+    const reporting = new Set(lastOverviewRows.map(r => r.Outlet));
+    const allOutlets = OUTLETS.map(o => o.OutletName);
+    const html = `<table><thead><tr><th>Outlet</th><th>Status</th><th>Supervisor(s)</th></tr></thead><tbody>` +
+      allOutlets.map(name => `
+        <tr>
+          <td>${name}</td>
+          <td>${reporting.has(name) ? "✅ Reported" : "⚠️ No reports this period"}</td>
+          <td>${(mgmtSupervisorsMap[name] || []).join(", ") || "No supervisor assigned"}</td>
+        </tr>
+      `).join("") + `</tbody></table>`;
+    showDetailModal(`Outlets reporting — ${lastOverviewLabel}`, html);
+  } else if (kind === "pending") {
+    const html = mgmtPendingPriceItems.length
+      ? `<table><thead><tr><th>Item</th></tr></thead><tbody>` +
+        mgmtPendingPriceItems.map(name => `<tr><td>${name}</td></tr>`).join("") + `</tbody></table>`
+      : `<p class="lead">Every item currently has a price set.</p>`;
+    showDetailModal("Items awaiting a price", html);
+  } else if (kind === "outlet") {
+    const rows = lastOverviewRows.filter(r => r.Outlet === arg);
+    showDetailModal(`${arg} — ${lastOverviewLabel}`, reportsTableHtml(rows));
+  }
 }
 
 async function loadTrendChart() {
@@ -1244,7 +1362,8 @@ document.getElementById("add-item-btn").addEventListener("click", async () => {
     document.getElementById("new-item-cat").value = "";
     document.getElementById("new-item-cost").value = "";
     const allItems = await api("getItems");
-    mgmtPendingPriceCount = allItems.filter(i => !Number(i.CostPerUnit)).length;
+    mgmtPendingPriceItems = allItems.filter(i => !Number(i.CostPerUnit)).map(i => i.ItemName);
+    mgmtPendingPriceCount = mgmtPendingPriceItems.length;
     loadOverview();
   } catch (e) { toast(e.message, true); }
 });
