@@ -1,296 +1,519 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>WasteFlow — Log Waste</title>
-<link rel="stylesheet" href="assets/styles.css">
-<style>
-  body { padding-bottom: 40px; }
-  .topbar {
-    position: sticky; top: 0; z-index: 50; background: var(--bg);
-    display: flex; align-items: center; gap: 12px; padding: 16px 18px 12px;
-    border-bottom: 1px solid var(--border);
+/**
+ * APTITUDE WASTE PORTAL — Backend (Google Apps Script)
+ * ------------------------------------------------------
+ * Bind this script to a Google Sheet with the following tabs (exact names):
+ *   Outlets      -> OutletID | OutletName | Active
+ *   Items        -> ItemID | ItemName | Category | Unit | CostPerUnit | Active
+ *                   Unit is the smallest base unit for that item: g (grams),
+ *                   ml (millilitres), or pcs (pieces/each). CostPerUnit is the
+ *                   cost of ONE gram / ONE ml / ONE piece (a small number).
+ *   Reports      -> ReportID | Timestamp | Outlet | ItemName | Category | Qty | Unit | UnitCost | TotalCost | PosterName | PhotoURL | Notes
+ *   Supervisors  -> Outlet | Username | Password
+ *   Management   -> Name | Email | Password | Role
+ *   InventoryReceipts -> Date | Outlet | ItemName | Received
+ *                   (Wasted is pulled live from Reports; Available/Closing
+ *                   stock is computed by rolling forward day by day.)
+ *   InventoryOpeningOverrides -> Date | Outlet | ItemName | OpeningStock
+ *                   (Lets a supervisor set the true physical count as of any
+ *                   date — a "day zero" reset point — instead of assuming
+ *                   stock always starts at 0.)
+ *
+ * Deploy: Deploy > New deployment > Web app
+ *   Execute as: Me
+ *   Who has access: Anyone
+ * Copy the resulting /exec URL into API_URL in Index.html
+ */
+
+const SS = SpreadsheetApp.getActiveSpreadsheet();
+const PHOTO_FOLDER_NAME = "WastePortal_Photos";
+
+function doGet(e) {
+  return jsonOut({ ok: true, message: "Aptitude Waste Portal API is running." });
+}
+
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+    const action = body.action;
+    const payload = body.payload || {};
+    let result;
+
+    switch (action) {
+      case "getOutlets":        result = getOutlets(); break;
+      case "getItems":          result = getItems(); break;
+      case "addOutlet":         result = addOutlet(payload); break;
+      case "submitReport":      result = submitReport(payload); break;
+      case "submitBatchReport": result = submitBatchReport(payload); break;
+      case "supervisorLogin":   result = supervisorLogin(payload); break;
+      case "managementLogin":   result = managementLogin(payload); break;
+      case "getReports":        result = getReports(payload); break;
+      case "addItem":           result = addItem(payload); break;
+      case "updateItem":        result = updateItem(payload); break;
+      case "addManagementUser": result = addManagementUser(payload); break;
+      case "addSupervisor":     result = addSupervisor(payload); break;
+      case "getInventory":      result = getInventory(payload); break;
+      case "setReceived":       result = setReceived(payload); break;
+      case "setOpeningStock":   result = setOpeningStock(payload); break;
+      case "getSupervisorsList": result = getSupervisorsList(); break;
+      default:
+        return jsonOut({ ok: false, error: "Unknown action: " + action });
+    }
+    return jsonOut({ ok: true, data: result });
+  } catch (err) {
+    return jsonOut({ ok: false, error: err.message });
   }
-  .topbar .mark { width: 34px; height: 34px; border-radius: 9px; background: var(--moss); flex-shrink:0; }
-  .topbar .mark svg { width: 100%; height: 100%; }
-  .topbar h1 { font-size: 18px; }
-  .topbar .sub { font-size: 12px; color: var(--text-soft); margin-top: 1px; }
-  .icon-btn {
-    width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--border);
-    background: var(--surface); display:flex; align-items:center; justify-content:center; flex-shrink: 0;
+}
+
+function jsonOut(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ---------------- ONE-TIME SETUP ----------------
+ * Run this once from the Apps Script editor (select setupSheets from the
+ * function dropdown, click Run) to create all tabs, headers, and seed data.
+ * Safe to re-run — it won't duplicate a tab that already exists.
+ */
+function setupSheets() {
+  createTab("Outlets", ["OutletID", "OutletName", "Active"], [
+    ["OUT-1", "Louvre", true],
+    ["OUT-2", "ARC", true],
+    ["OUT-3", "DGE", true],
+    ["OUT-4", "Al Qana", true],
+    ["OUT-5", "S45 Khalidya", true],
+    ["OUT-6", "Al Nahyan", true]
+  ]);
+
+  createTab("Items", ["ItemID", "ItemName", "Category", "Unit", "CostPerUnit", "Active"], [
+    ["ITM-1", "Sample Item — replace with your list", "F&B", "g", 0, true]
+  ]);
+
+  createTab("Reports", ["ReportID", "Timestamp", "Outlet", "ItemName", "Category",
+    "Qty", "Unit", "UnitCost", "TotalCost", "PosterName", "PhotoURL", "Notes"], []);
+
+  createTab("Supervisors", ["Outlet", "Username", "Password"], [
+    ["Louvre", "louvre.sup", "ChangeMe123"],
+    ["ARC", "arc.sup", "ChangeMe123"],
+    ["DGE", "dge.sup", "ChangeMe123"],
+    ["Al Qana", "qana.sup", "ChangeMe123"],
+    ["S45 Khalidya", "khalidya.sup", "ChangeMe123"],
+    ["Al Nahyan", "nahyan.sup", "ChangeMe123"]
+  ]);
+
+  createTab("Management", ["Name", "Email", "Password", "Role"], [
+    ["Deven", "Operations@aptitude", "ChangeMe123", "Manager - Operations"],
+    ["Siji", "Admin@aptitude.ae", "ChangeMe123", "Admin"],
+    ["Mansoor", "Accounts@aptitude.ae", "ChangeMe123", "Accounts"]
+  ]);
+
+  createTab("InventoryReceipts", ["Date", "Outlet", "ItemName", "Received"], []);
+  createTab("InventoryOpeningOverrides", ["Date", "Outlet", "ItemName", "OpeningStock"], []);
+
+  SpreadsheetApp.getUi().alert("Setup complete. Tabs created/verified: Outlets, Items, Reports, Supervisors, Management, InventoryReceipts, InventoryOpeningOverrides.\n\nIMPORTANT: change every 'ChangeMe123' password before going live.");
+}
+
+function createTab(name, headers, seedRows) {
+  let sh = SS.getSheetByName(name);
+  if (!sh) {
+    sh = SS.insertSheet(name);
+  }
+  if (sh.getLastRow() === 0) {
+    sh.appendRow(headers);
+    sh.setFrozenRows(1);
+    seedRows.forEach(row => sh.appendRow(row));
+  }
+}
+
+/* ---------------- SHEET HELPERS ---------------- */
+
+function sheet(name) {
+  const sh = SS.getSheetByName(name);
+  if (!sh) throw new Error("Missing sheet tab: " + name);
+  return sh;
+}
+
+function readTable(name) {
+  const sh = sheet(name);
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift();
+  return values
+    .filter(row => row.join("") !== "")
+    .map(row => {
+      const obj = {};
+      headers.forEach((h, i) => obj[h] = row[i]);
+      return obj;
+    });
+}
+
+function appendRow(name, rowObj, headers) {
+  const sh = sheet(name);
+  const row = headers.map(h => (rowObj[h] !== undefined ? rowObj[h] : ""));
+  sh.appendRow(row);
+}
+
+/* ---------------- OUTLETS ---------------- */
+
+function getOutlets() {
+  return readTable("Outlets").filter(o => o.Active !== false && o.Active !== "FALSE");
+}
+
+function addOutlet(payload) {
+  const outlets = getOutlets();
+  const exists = outlets.find(o => String(o.OutletName).toLowerCase() === String(payload.name).toLowerCase());
+  if (exists) return exists;
+  const newId = "OUT-" + (outlets.length + 1) + "-" + Date.now().toString().slice(-4);
+  appendRow("Outlets", { OutletID: newId, OutletName: payload.name, Active: true },
+    ["OutletID", "OutletName", "Active"]);
+  return { OutletID: newId, OutletName: payload.name, Active: true };
+}
+
+/* ---------------- ITEMS ---------------- */
+
+function getItems() {
+  return readTable("Items").filter(i => i.Active !== false && i.Active !== "FALSE");
+}
+
+function addItem(payload) {
+  // payload: itemName, category, unit ("g" | "ml" | "pcs"), costPerUnit (optional, defaults 0)
+  const items = readTable("Items");
+  const existing = items.find(i => String(i.ItemName).toLowerCase() === String(payload.itemName).toLowerCase());
+  if (existing) {
+    // Item already exists (likely auto-created by staff with cost 0) —
+    // treat this as filling in / updating its details rather than duplicating it.
+    return updateItem({
+      itemId: existing.ItemID,
+      Category: payload.category || existing.Category,
+      Unit: payload.unit || existing.Unit,
+      CostPerUnit: payload.costPerUnit !== undefined && payload.costPerUnit !== "" ? payload.costPerUnit : existing.CostPerUnit
+    }) && { ...existing, Category: payload.category || existing.Category, Unit: payload.unit || existing.Unit, CostPerUnit: payload.costPerUnit || existing.CostPerUnit };
   }
 
-  .wrap { max-width: 560px; margin: 0 auto; padding: 18px; }
-  .section-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-soft); font-weight: 700; margin: 26px 0 10px 2px; }
-  .section-title:first-child { margin-top: 4px; }
+  const newId = "ITM-" + (items.length + 1) + "-" + Date.now().toString().slice(-4);
+  const row = {
+    ItemID: newId,
+    ItemName: payload.itemName,
+    Category: payload.category || "",
+    Unit: payload.unit || "g",
+    CostPerUnit: payload.costPerUnit || 0,
+    Active: true
+  };
+  appendRow("Items", row, ["ItemID", "ItemName", "Category", "Unit", "CostPerUnit", "Active"]);
+  return row;
+}
 
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-
-  /* Item picker */
-  .chip-row { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 10px; -webkit-overflow-scrolling: touch; }
-  .chip-row::-webkit-scrollbar { display: none; }
-  .chip {
-    flex-shrink: 0; padding: 9px 15px; border-radius: 999px; border: 1.5px solid var(--border);
-    background: var(--surface); font-size: 13.5px; font-weight: 600; color: var(--text-soft); white-space: nowrap;
+function updateItem(payload) {
+  const sh = sheet("Items");
+  const data = sh.getDataRange().getValues();
+  const headers = data[0];
+  const idCol = headers.indexOf("ItemID");
+  for (let r = 1; r < data.length; r++) {
+    if (data[r][idCol] === payload.itemId) {
+      headers.forEach((h, c) => {
+        if (payload[h] !== undefined) sh.getRange(r + 1, c + 1).setValue(payload[h]);
+      });
+      return { updated: true };
+    }
   }
-  .chip.active { background: var(--moss); border-color: var(--moss); color: #fff; }
-  .item-list { max-height: 300px; overflow-y: auto; border: 1.5px solid var(--border); border-radius: var(--radius-md); }
-  .item-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 15px; font-weight: 500;
-  }
-  .item-row:last-child { border-bottom: none; }
-  .item-row:active { background: var(--mist); }
-  .item-row .cat { font-size: 11.5px; color: var(--text-soft); font-weight: 400; }
-  .item-empty { padding: 28px 16px; text-align: center; color: var(--text-soft); font-size: 14px; }
+  throw new Error("Item not found: " + payload.itemId);
+}
 
-  .selected-item {
-    display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 16px; border-radius: var(--radius-md); background: rgba(47,107,79,0.1); border: 1.5px solid var(--moss);
-  }
-  [data-theme="dark"] .selected-item { background: rgba(111,203,159,0.1); }
-  .selected-item strong { font-family: var(--font-display); font-size: 16px; }
-  .selected-item .cat { font-size: 12.5px; color: var(--text-soft); margin-top: 2px; }
+/* ---------------- REPORTS (STAFF — NO LOGIN) ---------------- */
 
-  /* Quantity stepper */
-  .stepper { display: flex; align-items: stretch; border: 1.5px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
-  .stepper button {
-    width: 54px; border: none; background: var(--surface); font-size: 22px; font-weight: 700; color: var(--moss);
-  }
-  .stepper button:active { background: var(--mist); }
-  .stepper input {
-    flex: 1; border: none; border-left: 1.5px solid var(--border); border-right: 1.5px solid var(--border);
-    text-align: center; font-size: 18px; font-family: var(--font-mono); font-weight: 500; background: var(--surface); color: var(--text);
-  }
+function submitReport(payload) {
+  const result = createSingleReportRow(payload);
+  return { reportId: result.reportId, totalCost: result.totalCost, unit: result.unit, isNewItem: result.isNewItem };
+}
 
-  /* Photo */
-  .photo-picker {
-    border: 1.5px dashed var(--border); border-radius: var(--radius-md); padding: 20px;
-    display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--text-soft);
-    text-align: center; font-size: 13.5px;
-  }
-  .photo-preview { max-width: 100%; max-height: 220px; border-radius: var(--radius-sm); margin-top: 10px; display: none; }
+function submitBatchReport(payload) {
+  // payload: outlet, posterName, items: [{ itemName, category, unit, qty, notes, photoBase64, photoMimeType }]
+  const rows = [];
+  let grandTotal = 0;
+  (payload.items || []).forEach(line => {
+    const result = createSingleReportRow({
+      outlet: payload.outlet,
+      posterName: payload.posterName,
+      itemName: line.itemName,
+      category: line.category,
+      unit: line.unit,
+      qty: line.qty,
+      notes: line.notes,
+      photoBase64: line.photoBase64,
+      photoMimeType: line.photoMimeType
+    });
+    grandTotal += result.totalCost;
+    rows.push({
+      itemName: line.itemName,
+      qty: line.qty,
+      unit: result.unit,
+      totalCost: result.totalCost,
+      reportId: result.reportId
+    });
+  });
+  return { rows, grandTotal: Number(grandTotal.toFixed(2)), count: rows.length };
+}
 
-  .actions { display: flex; gap: 12px; margin-top: 28px; }
+function createSingleReportRow(payload) {
+  // payload: outlet, itemName, category, unit ("g"|"ml"|"pcs"), qty, posterName,
+  //          notes, photoBase64, photoMimeType
+  const items = getItems();
+  let item = items.find(i => String(i.ItemName).toLowerCase() === String(payload.itemName).toLowerCase());
 
-  .who-bar {
-    display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: var(--radius-md);
-    background: var(--surface); border: 1px solid var(--border); font-size: 13.5px; margin-bottom: 4px;
-  }
-  .who-bar .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--sprout); color: var(--ink);
-    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
-  .who-bar a { font-size: 13px; font-weight: 600; }
-
-  .offline-banner {
-    display: none; background: var(--amber); color: #4a3103; font-size: 13px; font-weight: 600;
-    text-align: center; padding: 8px; border-radius: var(--radius-sm); margin-bottom: 14px;
-  }
-  .offline-banner.show { display: block; }
-
-  #successScreen {
-    position: fixed; inset: 0; background: var(--bg); z-index: 100; display: none;
-    flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px;
-  }
-  #successScreen.show { display: flex; }
-  .success-ring {
-    width: 84px; height: 84px; border-radius: 50%; background: var(--moss); display: flex; align-items: center;
-    justify-content: center; margin-bottom: 22px;
+  // Staff typed a brand-new item that isn't in the master list yet —
+  // create it automatically with cost 0 (management fills the real cost in later).
+  if (!item) {
+    item = addItem({
+      itemName: payload.itemName,
+      category: payload.category || "",
+      unit: payload.unit || "g",
+      costPerUnit: 0
+    });
   }
 
-  /* Login modal */
-  .modal-overlay {
-    position: fixed; inset: 0; background: rgba(22,33,28,0.5); z-index: 300;
-    display: none; align-items: center; justify-content: center; padding: 20px;
+  const unit = item.Unit || payload.unit || "g";
+  const costPerUnit = Number(item.CostPerUnit) || 0;
+  const qty = Number(payload.qty) || 0;
+  const totalCost = qty * costPerUnit;
+
+  let photoUrl = "";
+  if (payload.photoBase64) {
+    photoUrl = savePhoto(payload.photoBase64, payload.photoMimeType || "image/jpeg");
   }
-  .modal-overlay.show { display: flex; }
-  .modal-box { width: 100%; max-width: 380px; padding: 24px; }
-  .modal-box h3 { margin-bottom: 18px; }
-  .modal-actions { display: flex; gap: 10px; margin-top: 6px; }
 
-  /* Cart (today's list) */
-  .cart-row {
-    display: flex; align-items: center; gap: 10px; padding: 9px 0;
-    border-bottom: 1px solid var(--border); font-size: 13.5px;
+  // Auto-register outlet if it's a new one typed by staff
+  const outlets = getOutlets();
+  if (!outlets.find(o => o.OutletName === payload.outlet)) {
+    addOutlet({ name: payload.outlet });
   }
-  .cart-row:last-child { border-bottom: none; }
-  .cart-row .name { font-weight: 600; flex: 1; min-width: 0; }
-  .cart-row .meta { color: var(--text-soft); font-size: 12px; }
-  .cart-row .cost { font-family: var(--font-mono); }
-  .cart-row .rm { background: none; border: none; color: var(--clay); font-size: 16px; padding: 2px 6px; }
-</style>
-</head>
-<body>
 
-  <div class="topbar">
-    <div class="mark">
-      <svg viewBox="0 0 34 34" fill="none"><path d="M9 12h16M9 17h16M9 22h10" stroke="#F6F4EE" stroke-width="2.4" stroke-linecap="round"/></svg>
-    </div>
-    <div>
-      <h1>WasteFlow</h1>
-      <div class="sub">Log waste in under a minute</div>
-    </div>
-    <div class="spacer"></div>
-    <button class="icon-btn" id="themeToggle" title="Toggle dark mode" aria-label="Toggle dark mode">🌙</button>
-  </div>
+  const reportId = "RPT-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
+  appendRow("Reports", {
+    ReportID: reportId,
+    Timestamp: new Date(),
+    Outlet: payload.outlet,
+    ItemName: item.ItemName,
+    Category: payload.category || item.Category || "",
+    Qty: qty,
+    Unit: unit,
+    UnitCost: costPerUnit,
+    TotalCost: Number(totalCost.toFixed(2)),
+    PosterName: payload.posterName,
+    PhotoURL: photoUrl,
+    Notes: payload.notes || ""
+  }, ["ReportID", "Timestamp", "Outlet", "ItemName", "Category", "Qty", "Unit",
+      "UnitCost", "TotalCost", "PosterName", "PhotoURL", "Notes"]);
 
-  <div class="wrap">
+  return { reportId, totalCost: Number(totalCost.toFixed(2)), unit, isNewItem: !Number(item.CostPerUnit) };
+}
 
-    <div class="offline-banner" id="offlineBanner">You're offline — entries will save locally and sync automatically.</div>
+function savePhoto(base64Data, mimeType) {
+  const folders = DriveApp.getFoldersByName(PHOTO_FOLDER_NAME);
+  const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(PHOTO_FOLDER_NAME);
+  const ext = mimeType.split("/")[1] || "jpg";
+  const bytes = Utilities.base64Decode(base64Data);
+  const blob = Utilities.newBlob(bytes, mimeType, "waste_" + Date.now() + "." + ext);
+  const file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  return "https://drive.google.com/uc?id=" + file.getId();
+}
 
-    <div class="who-bar">
-      <div class="avatar" id="whoAvatar">?</div>
-      <div style="flex:1">
-        <div id="whoLabel" style="font-weight:600">Not signed in — enter your name below</div>
-        <div class="text-soft" id="whoSub">Anyone at your outlet can submit without an account.</div>
-      </div>
-      <button type="button" class="btn btn-ghost" id="whoActionBtn" style="padding:8px 14px; font-size:13px;">Sign in</button>
-    </div>
+/* ---------------- AUTH ---------------- */
 
-    <div class="card hidden" id="cartCard" style="padding:16px 18px; margin-bottom:16px;">
-      <div class="flex gap-8 center" style="margin-bottom:2px;">
-        <strong style="font-family:var(--font-display); font-size:15px;">Today's list</strong>
-        <div class="spacer"></div>
-        <span class="badge badge-moss" id="cartCount">0 items</span>
-      </div>
-      <div class="text-soft" style="font-size:12.5px; margin-bottom:10px;">Add each wasted item below, then submit them all at once when you're done.</div>
-      <div id="cartList"></div>
-      <div class="flex center" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border);">
-        <strong style="font-family:var(--font-mono); font-size:15px;">Total: <span id="cartTotal">AED 0.00</span></strong>
-        <div class="spacer"></div>
-        <button type="button" class="btn btn-primary" id="submitAllBtn" disabled>Submit all &amp; sign out</button>
-      </div>
-    </div>
+function supervisorLogin(payload) {
+  const rows = readTable("Supervisors");
+  const match = rows.find(r =>
+    String(r.Username).toLowerCase() === String(payload.username).toLowerCase() &&
+    String(r.Password) === String(payload.password)
+  );
+  if (!match) throw new Error("Invalid supervisor username or password.");
+  return { role: "supervisor", outlet: match.Outlet, username: match.Username };
+}
 
-    <form id="wasteForm" novalidate>
+function managementLogin(payload) {
+  const rows = readTable("Management");
+  const match = rows.find(r =>
+    String(r.Email).toLowerCase() === String(payload.email).toLowerCase() &&
+    String(r.Password) === String(payload.password)
+  );
+  if (!match) throw new Error("Invalid management email or password.");
+  return { role: "management", name: match.Name, email: match.Email, title: match.Role };
+}
 
-      <div class="section-title">When &amp; where</div>
-      <div class="grid-2">
-        <div class="field">
-          <label>Date <span class="required">*</span></label>
-          <input class="input" type="date" name="date" id="fDate" required>
-          <div class="err-msg">Date is required.</div>
-        </div>
-        <div class="field">
-          <label>Outlet <span class="required">*</span></label>
-          <select class="select" name="outlet" id="fOutlet" required></select>
-          <div class="err-msg">Select an outlet.</div>
-          <div class="hint hidden" id="outletLockHint">🔒 Locked to your account's outlet.</div>
-        </div>
-      </div>
-      <div class="field">
-        <label>Department <span class="required">*</span></label>
-        <select class="select" name="department" id="fDepartment" required></select>
-        <div class="err-msg">Select a department.</div>
-      </div>
+function addManagementUser(payload) {
+  appendRow("Management", {
+    Name: payload.name, Email: payload.email, Password: payload.password, Role: payload.role
+  }, ["Name", "Email", "Password", "Role"]);
+  return { added: true };
+}
 
-      <div class="section-title">What was wasted <span class="required">*</span></div>
-      <div id="itemPickerBlock">
-        <input class="input" type="search" id="itemSearch" placeholder="Search the item list…" style="margin-bottom:10px;">
-        <div class="chip-row" id="categoryChips"></div>
-        <div class="item-list" id="itemList"></div>
-      </div>
-      <div class="selected-item hidden" id="selectedItemBlock">
-        <div>
-          <strong id="selectedItemName"></strong>
-          <div class="cat" id="selectedItemCat"></div>
-        </div>
-        <button type="button" class="btn btn-ghost" id="changeItemBtn">Change</button>
-      </div>
-      <div class="err-msg" id="itemErr" style="display:none">Select an item.</div>
+function addSupervisor(payload) {
+  const sh = sheet("Supervisors");
+  const data = sh.getDataRange().getValues();
+  const headers = data[0];
+  const userCol = headers.indexOf("Username");
+  for (let r = 1; r < data.length; r++) {
+    if (String(data[r][userCol]).toLowerCase() === String(payload.username).toLowerCase()) {
+      sh.getRange(r + 1, headers.indexOf("Outlet") + 1).setValue(payload.outlet);
+      sh.getRange(r + 1, headers.indexOf("Password") + 1).setValue(payload.password);
+      return { updated: true };
+    }
+  }
+  appendRow("Supervisors", {
+    Outlet: payload.outlet, Username: payload.username, Password: payload.password
+  }, ["Outlet", "Username", "Password"]);
+  return { added: true };
+}
 
-      <div class="section-title">How much</div>
-      <div class="grid-2">
-        <div class="field">
-          <label>Quantity <span class="required">*</span></label>
-          <div class="stepper">
-            <button type="button" id="qtyMinus" aria-label="Decrease">–</button>
-            <input type="number" inputmode="decimal" id="fQuantity" name="quantity" value="1" min="0" step="0.1">
-            <button type="button" id="qtyPlus" aria-label="Increase">+</button>
-          </div>
-        </div>
-        <div class="field">
-          <label>Unit <span class="required">*</span></label>
-          <select class="select" name="unit" id="fUnit" required>
-            <option value="Kg">Kg</option>
-            <option value="Liters">Liters</option>
-            <option value="Pieces">Pieces</option>
-          </select>
-        </div>
-      </div>
-      <div class="field">
-        <label>Estimated cost (AED)</label>
-        <input class="input" type="number" inputmode="decimal" name="estimatedCost" id="fCost" min="0" step="0.01" placeholder="0.00">
-        <div class="hint">Auto-filled from the item catalog when known — adjust if needed.</div>
-      </div>
+function getSupervisorsList() {
+  // Deliberately omits passwords — this is for Management's read-only overview only.
+  return readTable("Supervisors").map(r => ({ Outlet: r.Outlet, Username: r.Username }));
+}
 
-      <div class="section-title">Why</div>
-      <div class="field">
-        <label>Reason for waste <span class="required">*</span></label>
-        <select class="select" name="reason" id="fReason" required></select>
-        <div class="err-msg">Select a reason.</div>
-      </div>
+/* ---------------- INVENTORY ---------------- */
+// InventoryReceipts sheet stores ONLY manual "Item Received" entries.
+// Wasted is always pulled live from Reports. Available/Closing stock is
+// computed by rolling forward day by day, so it self-corrects even if a
+// past day's data changes later — no stale numbers, no manual carry-forward.
 
-      <div class="section-title">Who</div>
-      <div class="field">
-        <label>Staff name <span class="required">*</span></label>
-        <input class="input" type="text" name="staffName" id="fStaffName" placeholder="Your full name" required>
-        <div class="err-msg">Enter your name.</div>
-      </div>
+function toDateStr(d) {
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return Utilities.formatDate(dt, Session.getScriptTimeZone(), "yyyy-MM-dd");
+}
 
-      <div class="section-title">Photo (optional)</div>
-      <div class="field">
-        <label class="photo-picker" id="photoPicker" for="fPhoto">
-          <span style="font-size:22px">📷</span>
-          <span id="photoLabel">Tap to take or upload a photo</span>
-          <input type="file" accept="image/*" capture="environment" id="fPhoto" style="display:none">
-        </label>
-        <img class="photo-preview" id="photoPreview" alt="Selected photo preview">
-      </div>
+function dayName(dateStr) {
+  return Utilities.formatDate(new Date(dateStr), Session.getScriptTimeZone(), "EEEE");
+}
 
-      <div class="field">
-        <label>Remarks</label>
-        <textarea class="input" name="remarks" id="fRemarks" rows="3" placeholder="Anything else worth noting…"></textarea>
-      </div>
+function getInventory(payload) {
+  // payload: { date: "yyyy-MM-dd", outlet }
+  const date = payload.date;
+  const outlet = payload.outlet;
+  if (!date) throw new Error("date is required");
+  if (!outlet) throw new Error("outlet is required");
 
-      <div class="actions">
-        <button type="button" class="btn btn-ghost btn-block btn-lg" id="clearBtn">Clear form</button>
-        <button type="submit" class="btn btn-primary btn-block btn-lg" id="submitBtn">Submit</button>
-      </div>
-    </form>
-  </div>
+  const items = getItems();
+  const receipts = readTable("InventoryReceipts").filter(r => r.Outlet === outlet);
+  const reports = readTable("Reports").filter(r => r.Outlet === outlet);
+  const overrides = readTable("InventoryOpeningOverrides").filter(r => r.Outlet === outlet);
 
-  <div id="successScreen">
-    <div class="success-ring">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M4 12.5L9.5 18L20 6" stroke="#F6F4EE" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </div>
-    <h2 style="font-size:22px; margin-bottom:8px;">Entry logged</h2>
-    <p class="text-soft" style="max-width:280px; margin-bottom:26px;">Thanks — this has been saved to the waste log.</p>
-    <div style="display:flex; gap:12px; width:100%; max-width:280px;">
-      <button class="btn btn-ghost btn-block" id="viewAdminBtn">Dashboard</button>
-      <button class="btn btn-primary btn-block" id="logAnotherBtn">Log another</button>
-    </div>
-  </div>
+  const allDatesSet = new Set();
+  receipts.forEach(r => allDatesSet.add(toDateStr(r.Date)));
+  reports.forEach(r => allDatesSet.add(toDateStr(r.Timestamp)));
+  overrides.forEach(r => allDatesSet.add(toDateStr(r.Date)));
+  allDatesSet.add(date);
+  const allDates = Array.from(allDatesSet).filter(d => d <= date).sort();
 
-  <div class="toast" id="toast"></div>
+  return items.map(item => {
+    let opening = 0;
+    let rowForDate = null;
+    allDates.forEach(d => {
+      // An opening-balance override "resets" the ledger on that date — this is how
+      // a supervisor can start tracking a real physical count on any day (day zero),
+      // instead of the system assuming stock always starts at 0.
+      const override = overrides.find(o => toDateStr(o.Date) === d && o.ItemName === item.ItemName);
+      if (override) opening = Number(override.OpeningStock) || 0;
 
-  <div class="modal-overlay" id="loginModal">
-    <div class="card modal-box">
-      <h3>Sign in</h3>
-      <form id="loginModalForm">
-        <div class="field"><label>Username</label><input class="input" id="lmUsername" autocomplete="username" required></div>
-        <div class="field"><label>Password</label><input class="input" type="password" id="lmPassword" autocomplete="current-password" required></div>
-        <div class="err-msg" id="loginModalErr" style="display:none; margin-bottom:14px;"></div>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-ghost btn-block" id="loginModalCancel">Cancel</button>
-          <button type="submit" class="btn btn-primary btn-block" id="loginModalSubmit">Sign in</button>
-        </div>
-      </form>
-    </div>
-  </div>
+      const received = receipts
+        .filter(r => toDateStr(r.Date) === d && r.ItemName === item.ItemName)
+        .reduce((s, r) => s + Number(r.Received || 0), 0);
+      const wasted = reports
+        .filter(r => toDateStr(r.Timestamp) === d && r.ItemName === item.ItemName)
+        .reduce((s, r) => s + Number(r.Qty || 0), 0);
+      const closing = opening + received - wasted;
+      if (d === date) {
+        rowForDate = {
+          Date: date, Day: dayName(date), ItemName: item.ItemName, Unit: item.Unit,
+          Opening: opening, Received: received, Wasted: wasted, Available: closing,
+          CostPerUnit: Number(item.CostPerUnit) || 0,
+          Value: Number(((opening + received - wasted) * (Number(item.CostPerUnit) || 0)).toFixed(2))
+        };
+      }
+      opening = closing;
+    });
+    return rowForDate || {
+      Date: date, Day: dayName(date), ItemName: item.ItemName, Unit: item.Unit,
+      Opening: 0, Received: 0, Wasted: 0, Available: 0,
+      CostPerUnit: Number(item.CostPerUnit) || 0, Value: 0
+    };
+  });
+}
 
-  <script src="assets/config.js"></script>
-  <script src="assets/api.js"></script>
-  <script src="assets/staff.js"></script>
-</body>
-</html>
+function setOpeningStock(payload) {
+  // payload: date, outlet, itemName, qty — sets/resets the true physical count as of this date
+  const sh = sheet("InventoryOpeningOverrides");
+  const data = sh.getDataRange().getValues();
+  const headers = data[0];
+  const dateCol = headers.indexOf("Date");
+  const outletCol = headers.indexOf("Outlet");
+  const itemCol = headers.indexOf("ItemName");
+  const openCol = headers.indexOf("OpeningStock");
+
+  for (let r = 1; r < data.length; r++) {
+    if (toDateStr(data[r][dateCol]) === payload.date &&
+        data[r][outletCol] === payload.outlet &&
+        data[r][itemCol] === payload.itemName) {
+      sh.getRange(r + 1, openCol + 1).setValue(Number(payload.qty) || 0);
+      return { updated: true };
+    }
+  }
+  appendRow("InventoryOpeningOverrides", {
+    Date: payload.date, Outlet: payload.outlet, ItemName: payload.itemName, OpeningStock: Number(payload.qty) || 0
+  }, ["Date", "Outlet", "ItemName", "OpeningStock"]);
+  return { added: true };
+}
+
+function setReceived(payload) {
+  // payload: date, outlet, itemName, qty
+  const sh = sheet("InventoryReceipts");
+  const data = sh.getDataRange().getValues();
+  const headers = data[0];
+  const dateCol = headers.indexOf("Date");
+  const outletCol = headers.indexOf("Outlet");
+  const itemCol = headers.indexOf("ItemName");
+  const recvCol = headers.indexOf("Received");
+
+  for (let r = 1; r < data.length; r++) {
+    if (toDateStr(data[r][dateCol]) === payload.date &&
+        data[r][outletCol] === payload.outlet &&
+        data[r][itemCol] === payload.itemName) {
+      sh.getRange(r + 1, recvCol + 1).setValue(Number(payload.qty) || 0);
+      return { updated: true };
+    }
+  }
+  appendRow("InventoryReceipts", {
+    Date: payload.date, Outlet: payload.outlet, ItemName: payload.itemName, Received: Number(payload.qty) || 0
+  }, ["Date", "Outlet", "ItemName", "Received"]);
+  return { added: true };
+}
+
+/* ---------------- REPORT QUERIES ---------------- */
+
+function getReports(payload) {
+  // payload: { scopeOutlet (optional, restricts to one outlet for supervisors),
+  //            outlet, itemName, category, dateFrom, dateTo }
+  let rows = readTable("Reports");
+
+  if (payload.scopeOutlet) {
+    rows = rows.filter(r => r.Outlet === payload.scopeOutlet);
+  }
+  if (payload.outlet) {
+    rows = rows.filter(r => r.Outlet === payload.outlet);
+  }
+  if (payload.itemName) {
+    rows = rows.filter(r => r.ItemName === payload.itemName);
+  }
+  if (payload.category) {
+    rows = rows.filter(r => r.Category === payload.category);
+  }
+  if (payload.dateFrom) {
+    const from = new Date(payload.dateFrom);
+    rows = rows.filter(r => new Date(r.Timestamp) >= from);
+  }
+  if (payload.dateTo) {
+    const to = new Date(payload.dateTo);
+    to.setHours(23, 59, 59, 999);
+    rows = rows.filter(r => new Date(r.Timestamp) <= to);
+  }
+
+  rows.sort((a, b) => new Date(b.Timestamp) - new Date(a.Timestamp));
+  return rows;
+}
