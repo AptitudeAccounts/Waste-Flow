@@ -966,6 +966,8 @@ document.getElementById("inv-mgmt-load").addEventListener("click", loadMgmtInven
 
 let mgmtSession = null;
 let mgmtSupervisorsMap = {};
+let mgmtTotalOutlets = 0;
+let mgmtPendingPriceCount = 0;
 let overviewPeriod = "today";
 
 document.getElementById("mgmt-login-btn").addEventListener("click", async () => {
@@ -978,11 +980,15 @@ document.getElementById("mgmt-login-btn").addEventListener("click", async () => 
     document.getElementById("mgmt-dashboard").style.display = "block";
     document.getElementById("mgmt-name-badge").textContent = mgmtSession.name + " · " + mgmtSession.title;
     const outlets = await api("getOutlets");
+    mgmtTotalOutlets = outlets.length;
     document.getElementById("mgmt-outlet").innerHTML =
       `<option value="">All outlets</option>` +
       outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
     document.getElementById("new-sup-outlet").innerHTML =
       outlets.map(o => `<option value="${o.OutletName}">${o.OutletName}</option>`).join("");
+
+    const allItems = await api("getItems");
+    mgmtPendingPriceCount = allItems.filter(i => !Number(i.CostPerUnit)).length;
 
     const supervisors = await api("getSupervisorsList");
     mgmtSupervisorsMap = {};
@@ -1076,12 +1082,25 @@ async function loadOverview() {
                + rows.filter(r => r.Unit === "l").reduce((s, r) => s + Number(r.Qty || 0), 0) * 1000;
   const avgCost = totalReports ? totalCost / totalReports : 0;
 
+  const byItem = {};
+  rows.forEach(r => {
+    byItem[r.ItemName] = (byItem[r.ItemName] || 0) + Number(r.TotalCost || 0);
+  });
+  const topItemEntry = Object.entries(byItem).sort((a, b) => b[1] - a[1])[0];
+  const topItemLabel = topItemEntry ? topItemEntry[0] : "—";
+  const topItemCost = topItemEntry ? topItemEntry[1] : 0;
+
+  const outletsReporting = new Set(rows.map(r => r.Outlet)).size;
+
   document.getElementById("overview-kpis").innerHTML = `
     <div class="kpi-card"><div class="kpi-icon i-cost">💰</div><div class="kpi-n">${fmtMoney(totalCost)}</div><div class="kpi-l">Total waste cost</div></div>
     <div class="kpi-card"><div class="kpi-icon i-reports">📋</div><div class="kpi-n">${totalReports}</div><div class="kpi-l">Reports logged</div></div>
     <div class="kpi-card"><div class="kpi-icon i-weight">⚖️</div><div class="kpi-n">${(grams/1000).toFixed(2)} kg</div><div class="kpi-l">Total weight waste</div></div>
     <div class="kpi-card"><div class="kpi-icon i-liquid">💧</div><div class="kpi-n">${(liquid/1000).toFixed(2)} L</div><div class="kpi-l">Total liquid waste</div></div>
     <div class="kpi-card"><div class="kpi-icon i-avg">📊</div><div class="kpi-n">${fmtMoney(avgCost)}</div><div class="kpi-l">Average cost / report</div></div>
+    <div class="kpi-card"><div class="kpi-icon i-cost">🥇</div><div class="kpi-n" style="font-size:16px;">${topItemLabel}</div><div class="kpi-l">Top wasted item (${fmtMoney(topItemCost)})</div></div>
+    <div class="kpi-card"><div class="kpi-icon i-weight">🏬</div><div class="kpi-n">${outletsReporting}/${mgmtTotalOutlets}</div><div class="kpi-l">Outlets reporting this period</div></div>
+    <div class="kpi-card"><div class="kpi-icon i-liquid">⏳</div><div class="kpi-n">${mgmtPendingPriceCount}</div><div class="kpi-l">Items awaiting a price</div></div>
   `;
 
   const byOutlet = {};
@@ -1190,6 +1209,9 @@ document.getElementById("add-item-btn").addEventListener("click", async () => {
     document.getElementById("new-item-name").value = "";
     document.getElementById("new-item-cat").value = "";
     document.getElementById("new-item-cost").value = "";
+    const allItems = await api("getItems");
+    mgmtPendingPriceCount = allItems.filter(i => !Number(i.CostPerUnit)).length;
+    loadOverview();
   } catch (e) { toast(e.message, true); }
 });
 
