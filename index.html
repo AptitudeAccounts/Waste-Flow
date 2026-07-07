@@ -139,24 +139,38 @@
   .summary-panel h3{margin:0 0 10px; font-size:15px; color:var(--moss-deep);}
   .summary-line{display:flex; justify-content:space-between; font-size:13.5px; padding:5px 0; border-bottom:1px dashed var(--line);}
   .summary-total{display:flex; justify-content:space-between; font-weight:700; padding-top:10px; font-family:var(--mono);}
-  .overview-card{background:linear-gradient(135deg,#232A1D,#1E2019); color:#fff; border:none;}
-  .overview-card h2, .overview-card h3{color:#fff;}
+  .overview-card{background:var(--panel); border:1px solid var(--line);}
   .overview-header{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:6px;}
   .period-toggle{display:flex; gap:6px; flex-wrap:wrap;}
   .period-toggle button{
-    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.18); color:#DFDCCF;
+    background:#F1F0EA; border:1px solid var(--line); color:var(--ink-soft);
     padding:7px 14px; border-radius:20px; font-size:12.5px; cursor:pointer; font-family:var(--sans);
   }
   .period-toggle button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
-  .overview-card .stat{background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.14);}
-  .overview-card .stat .n{color:#E9C46A;}
-  .overview-card .stat .l{color:#C7C4B6;}
-  .obar-row{display:grid; grid-template-columns:140px 1fr 110px; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid rgba(255,255,255,.1); font-size:13px;}
-  .obar-row .oname{font-weight:600;}
-  .obar-row .osup{font-size:11px; color:#B9B6A8; display:block;}
-  .obar-track{background:rgba(255,255,255,.08); border-radius:6px; height:14px; overflow:hidden;}
+  .kpi-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:14px; margin-top:16px;}
+  .kpi-card{background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:16px;}
+  .kpi-icon{width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; margin-bottom:12px;}
+  .kpi-icon.i-cost{background:#FBEFE1;}
+  .kpi-icon.i-reports{background:#E7ECE0;}
+  .kpi-icon.i-weight{background:#E2ECF3;}
+  .kpi-icon.i-liquid{background:#E5F1EF;}
+  .kpi-icon.i-avg{background:#F1E7F0;}
+  .kpi-n{font-family:var(--mono); font-size:24px; font-weight:700; color:var(--ink);}
+  .kpi-l{font-size:11.5px; text-transform:uppercase; letter-spacing:.3px; color:var(--ink-soft); margin-top:4px;}
+  .charts-grid{display:grid; grid-template-columns:1.2fr 1fr; gap:16px; margin-top:22px;}
+  @media (max-width:760px){ .charts-grid{grid-template-columns:1fr;} }
+  .chart-card{background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:18px;}
+  .chart-card h3{margin:0 0 16px; font-size:14.5px; display:flex; align-items:center; gap:8px;}
+  .trend-bars{display:flex; align-items:flex-end; gap:8px; height:160px; padding-top:10px;}
+  .trend-bar-wrap{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%;}
+  .trend-bar{width:100%; max-width:28px; background:var(--moss); border-radius:4px 4px 0 0; transition:.2s;}
+  .trend-label{font-size:10.5px; color:var(--ink-soft); margin-top:6px;}
+  .obar-row{display:grid; grid-template-columns:120px 1fr 90px; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--line); font-size:12.5px;}
+  .obar-row .oname{font-weight:600; color:var(--ink);}
+  .obar-row .osup{font-size:10.5px; color:var(--ink-soft); display:block;}
+  .obar-track{background:#EFEEE7; border-radius:6px; height:12px; overflow:hidden;}
   .obar-fill{background:linear-gradient(90deg,var(--moss),#8FA876); height:100%; border-radius:6px;}
-  .obar-value{font-family:var(--mono); text-align:right; color:#E9C46A; font-weight:600;}
+  .obar-value{font-family:var(--mono); text-align:right; color:var(--moss-deep); font-weight:600;}
   @media print {
     .topbar, nav.tabs, .no-print { display:none !important; }
     body{background:#fff;}
@@ -379,13 +393,22 @@
           </div>
         </div>
         <div class="filters" id="overview-custom-range" style="display:none;">
-          <div><label style="color:#C7C4B6;">From</label><input type="date" id="overview-from"></div>
-          <div><label style="color:#C7C4B6;">To</label><input type="date" id="overview-to"></div>
+          <div><label>From</label><input type="date" id="overview-from"></div>
+          <div><label>To</label><input type="date" id="overview-to"></div>
           <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="overview-custom-apply">Apply</button></div>
         </div>
-        <div class="summary-strip" id="overview-kpis"></div>
-        <h3 style="margin-top:22px; margin-bottom:10px;">Outlet-wise waste — who's responsible</h3>
-        <div id="overview-outlet-breakdown"></div>
+        <div class="kpi-grid" id="overview-kpis"></div>
+
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>📈 Waste Cost — Last 6 Months</h3>
+            <div class="trend-bars" id="overview-trend"></div>
+          </div>
+          <div class="chart-card">
+            <h3>🏬 Outlet Analysis — who's responsible</h3>
+            <div id="overview-outlet-breakdown"></div>
+          </div>
+        </div>
       </div>
 
       <div class="summary-strip" id="mgmt-summary"></div>
@@ -1054,11 +1077,11 @@ async function loadOverview() {
   const avgCost = totalReports ? totalCost / totalReports : 0;
 
   document.getElementById("overview-kpis").innerHTML = `
-    <div class="stat"><div class="n">${fmtMoney(totalCost)}</div><div class="l">Total waste cost</div></div>
-    <div class="stat"><div class="n">${totalReports}</div><div class="l">Reports logged</div></div>
-    <div class="stat"><div class="n">${(grams/1000).toFixed(2)} kg</div><div class="l">Total weight waste</div></div>
-    <div class="stat"><div class="n">${(liquid/1000).toFixed(2)} L</div><div class="l">Total liquid waste</div></div>
-    <div class="stat"><div class="n">${fmtMoney(avgCost)}</div><div class="l">Average cost / report</div></div>
+    <div class="kpi-card"><div class="kpi-icon i-cost">💰</div><div class="kpi-n">${fmtMoney(totalCost)}</div><div class="kpi-l">Total waste cost</div></div>
+    <div class="kpi-card"><div class="kpi-icon i-reports">📋</div><div class="kpi-n">${totalReports}</div><div class="kpi-l">Reports logged</div></div>
+    <div class="kpi-card"><div class="kpi-icon i-weight">⚖️</div><div class="kpi-n">${(grams/1000).toFixed(2)} kg</div><div class="kpi-l">Total weight waste</div></div>
+    <div class="kpi-card"><div class="kpi-icon i-liquid">💧</div><div class="kpi-n">${(liquid/1000).toFixed(2)} L</div><div class="kpi-l">Total liquid waste</div></div>
+    <div class="kpi-card"><div class="kpi-icon i-avg">📊</div><div class="kpi-n">${fmtMoney(avgCost)}</div><div class="kpi-l">Average cost / report</div></div>
   `;
 
   const byOutlet = {};
@@ -1082,7 +1105,46 @@ async function loadOverview() {
         <div class="obar-value">${fmtMoney(o.cost)}</div>
       </div>
     `).join("")
-    : `<p class="lead" style="color:#C7C4B6;">No waste reported in this period.</p>`;
+    : `<p class="lead">No waste reported in this period.</p>`;
+
+  loadTrendChart();
+}
+
+async function loadTrendChart() {
+  // Always the trailing 6 calendar months, independent of the period toggle above —
+  // gives management a stable trend view regardless of which period they're drilling into.
+  const now = new Date();
+  const monthStarts = [];
+  for (let i = 5; i >= 0; i--) {
+    monthStarts.push(new Date(now.getFullYear(), now.getMonth() - i, 1));
+  }
+  const rangeFrom = toISO(monthStarts[0]);
+  const rangeTo = toISO(now);
+  const rows = await api("getReports", { dateFrom: rangeFrom, dateTo: rangeTo });
+
+  const monthKey = (d) => d.getFullYear() + "-" + pad2(d.getMonth() + 1);
+  const totals = {};
+  monthStarts.forEach(m => totals[monthKey(m)] = 0);
+  rows.forEach(r => {
+    const d = new Date(r.Timestamp);
+    const key = monthKey(d);
+    if (totals[key] !== undefined) totals[key] += Number(r.TotalCost || 0);
+  });
+
+  const maxVal = Math.max(1, ...Object.values(totals));
+  const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  document.getElementById("overview-trend").innerHTML = monthStarts.map(m => {
+    const key = monthKey(m);
+    const val = totals[key];
+    const pct = Math.max(3, (val / maxVal * 100));
+    return `
+      <div class="trend-bar-wrap" title="${fmtMoney(val)}">
+        <div class="trend-bar" style="height:${pct}%"></div>
+        <div class="trend-label">${monthNames[m.getMonth()]}</div>
+      </div>
+    `;
+  }).join("");
 }
 
 document.getElementById("mgmt-pdf").addEventListener("click", () => {
