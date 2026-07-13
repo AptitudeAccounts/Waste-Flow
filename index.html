@@ -4,44 +4,50 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Aptitude Waste Portal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --ink:#1E2019;
-    --ink-soft:#3A3D33;
-    --paper:#F6F5F0;
+    --ink:#0A1730;
+    --ink-soft:#4B5871;
+    --paper:#F2F5FB;
     --panel:#FFFFFF;
-    --line:#DEDBD0;
-    --moss:#5B6E4F;
-    --moss-deep:#43533A;
-    --amber:#B5763A;
-    --danger:#A6412F;
+    --line:#E1E7F2;
+    --moss:#1B3A73;
+    --moss-deep:#0D2148;
+    --amber:#C9971E;
+    --danger:#B3261E;
     --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
     --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --heading: 'Poppins', var(--sans);
   }
   *{box-sizing:border-box;}
   body{
     margin:0; background:var(--paper); color:var(--ink);
     font-family:var(--sans); -webkit-font-smoothing:antialiased;
   }
+  h1, h2, h3{ font-family:var(--heading); letter-spacing:-.2px; }
   .topbar{
-    background:var(--ink); color:var(--paper);
+    background:linear-gradient(135deg, var(--ink) 0%, #142B57 60%, #1B3A73 100%); color:var(--paper);
     padding:18px 20px; display:flex; align-items:center; justify-content:space-between;
     position:sticky; top:0; z-index:20; flex-wrap:wrap; gap:10px;
+    box-shadow:0 4px 18px rgba(10,23,48,.25);
   }
   .brand{display:flex; align-items:center; gap:10px;}
   .brand .mark{
-    width:30px; height:30px; border-radius:7px; background:var(--moss);
+    width:32px; height:32px; border-radius:8px; background:linear-gradient(135deg, var(--amber), #E4C05C);
     display:flex; align-items:center; justify-content:center; font-size:16px;
+    box-shadow:0 2px 8px rgba(201,151,30,.4);
   }
-  .brand .name{font-weight:700; letter-spacing:.2px; font-size:16px;}
-  .brand .sub{font-size:11px; color:#C7C4B6; letter-spacing:.3px;}
+  .brand .name{font-family:var(--heading); font-weight:700; letter-spacing:.2px; font-size:17px;}
+  .brand .sub{font-size:11px; color:#AEC2E8; letter-spacing:.3px;}
   nav.tabs{display:flex; gap:6px; flex-wrap:wrap;}
   nav.tabs button{
-    background:transparent; border:1px solid #4B4D40; color:#DFDCCF;
+    background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.16); color:#D9E3F5;
     padding:8px 14px; border-radius:20px; font-size:13px; cursor:pointer;
     font-family:var(--sans); transition:.15s;
   }
-  nav.tabs button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
+  nav.tabs button.active{background:var(--amber); border-color:var(--amber); color:#1A1200; font-weight:700;}
   main{max-width:920px; margin:0 auto; padding:26px 18px 80px; transition:max-width .2s;}
   main.wide{max-width:1360px;}
   .view{display:none;}
@@ -50,40 +56,40 @@
 
   .card{
     background:var(--panel); border:1px solid var(--line); border-radius:14px;
-    padding:22px; margin-bottom:16px;
+    padding:22px; margin-bottom:16px; box-shadow:0 1px 3px rgba(10,23,48,.04);
   }
-  h1{font-size:22px; margin:0 0 4px;}
-  h2{font-size:17px; margin:0 0 14px; color:var(--ink);}
+  h1{font-size:22px; margin:0 0 4px; font-weight:700;}
+  h2{font-size:17px; margin:0 0 14px; color:var(--ink); font-weight:700;}
   p.lead{color:var(--ink-soft); font-size:13.5px; margin:0 0 18px;}
   label{display:block; font-size:12.5px; font-weight:600; color:var(--ink-soft); margin:14px 0 6px; text-transform:uppercase; letter-spacing:.4px;}
   label:first-child{margin-top:0;}
   input[type=text], input[type=number], input[type=email], input[type=password], input[type=date], select, textarea{
     width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:9px;
-    font-size:14.5px; font-family:var(--sans); background:#FCFBF8; color:var(--ink);
+    font-size:14.5px; font-family:var(--sans); background:#FBFCFE; color:var(--ink);
   }
   textarea{resize:vertical; min-height:64px;}
   input:focus, select:focus, textarea:focus{outline:2px solid var(--moss); outline-offset:1px; border-color:var(--moss);}
   .row{display:flex; gap:12px; flex-wrap:wrap;}
   .row > div{flex:1; min-width:140px;}
   .btn{
-    background:var(--moss); color:#fff; border:none; padding:12px 18px; border-radius:9px;
+    background:linear-gradient(135deg, var(--moss), var(--moss-deep)); color:#fff; border:none; padding:12px 18px; border-radius:9px;
     font-weight:600; font-size:14.5px; cursor:pointer; margin-top:18px; width:100%;
-    font-family:var(--sans); transition:.15s;
+    font-family:var(--sans); transition:.18s; box-shadow:0 2px 8px rgba(13,33,72,.18);
   }
-  .btn:hover{background:var(--moss-deep);}
-  .btn:disabled{opacity:.6; cursor:not-allowed;}
-  .btn.ghost{background:transparent; border:1px solid var(--line); color:var(--ink); width:auto; margin-top:0; padding:8px 14px; font-size:13px;}
+  .btn:hover{box-shadow:0 4px 14px rgba(13,33,72,.3); transform:translateY(-1px);}
+  .btn:disabled{opacity:.6; cursor:not-allowed; transform:none; box-shadow:none;}
+  .btn.ghost{background:transparent; border:1px solid var(--line); color:var(--ink); width:auto; margin-top:0; padding:8px 14px; font-size:13px; box-shadow:none;}
   .btn.small{width:auto; padding:8px 14px; font-size:13px; margin-top:0;}
   .btn.outline{background:transparent; border:1.5px solid var(--moss); color:var(--moss-deep); width:auto;}
   .cost-readout{
     background:var(--ink); color:#fff; border-radius:11px; padding:16px 18px; margin-top:18px;
     display:flex; justify-content:space-between; align-items:baseline;
   }
-  .cost-readout .lbl{font-size:12px; color:#C7C4B6; text-transform:uppercase; letter-spacing:.5px;}
-  .cost-readout .val{font-family:var(--mono); font-size:24px; font-weight:600; color:#E9C46A;}
+  .cost-readout .lbl{font-size:12px; color:#AEC2E8; text-transform:uppercase; letter-spacing:.5px;}
+  .cost-readout .val{font-family:var(--mono); font-size:24px; font-weight:700; color:var(--amber);}
   .camera-box{
     border:1.5px dashed var(--line); border-radius:11px; padding:14px; text-align:center; margin-top:6px;
-    background:#FCFBF8;
+    background:#F7F9FD;
   }
   .camera-box img{max-width:100%; max-height:160px; border-radius:8px; margin-top:10px;}
   .toast{
@@ -108,9 +114,9 @@
   .logout-row{display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;}
   .badge{font-size:11px; background:var(--moss); color:#fff; padding:3px 10px; border-radius:20px;}
   .scroll-x{overflow-x:auto;}
-  ::placeholder{color:#A6A28F;}
+  ::placeholder{color:#8B97AE;}
   .item-row{
-    border:1px solid var(--line); border-radius:11px; padding:16px; margin-bottom:14px; background:#FCFBF8; position:relative;
+    border:1px solid var(--line); border-radius:11px; padding:16px; margin-bottom:14px; background:#F7F9FD; position:relative;
   }
   .item-row .rownum{
     position:absolute; top:-10px; left:14px; background:var(--moss); color:#fff; font-size:11px;
@@ -122,7 +128,7 @@
   }
   .thumb{width:44px; height:44px; object-fit:cover; border-radius:6px; border:1px solid var(--line);}
   .modal-overlay{
-    display:none; position:fixed; inset:0; background:rgba(20,20,15,.55); z-index:100;
+    display:none; position:fixed; inset:0; background:rgba(6,14,32,.6); z-index:100;
     align-items:center; justify-content:center; padding:20px;
   }
   .modal-overlay.active{display:flex;}
@@ -135,7 +141,7 @@
   .modal-actions .btn{margin-top:0;}
   .modal-actions .btn.secondary{background:transparent; border:1px solid var(--line); color:var(--ink);}
   .summary-panel{
-    border:1.5px solid var(--moss); background:#F1F4EC; border-radius:12px; padding:18px; margin-top:16px;
+    border:1.5px solid var(--moss); background:#EEF3FB; border-radius:12px; padding:18px; margin-top:16px;
   }
   .summary-panel h3{margin:0 0 10px; font-size:15px; color:var(--moss-deep);}
   .summary-line{display:flex; justify-content:space-between; font-size:13.5px; padding:5px 0; border-bottom:1px dashed var(--line);}
@@ -158,16 +164,27 @@
   .modal-box.wide th, .modal-box.wide td{padding:7px 8px;}
   .dashboard-grid{display:grid; grid-template-columns:2fr 1fr; gap:16px;}
   @media (max-width:900px){ .dashboard-grid{grid-template-columns:1fr;} }
+  #item-price-table tbody tr{cursor:pointer;}
+  #item-price-table tbody tr:hover{background:#F7F6F0;}
   .kpi-icon{width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; margin-bottom:12px;}
-  .kpi-icon.i-cost{background:#FBEFE1;}
-  .kpi-icon.i-reports{background:#E7ECE0;}
-  .kpi-icon.i-weight{background:#E2ECF3;}
-  .kpi-icon.i-liquid{background:#E5F1EF;}
-  .kpi-icon.i-avg{background:#F1E7F0;}
+  .kpi-icon.i-cost{background:#FBF0D9;}
+  .kpi-icon.i-reports{background:#E4EAF7;}
+  .kpi-icon.i-weight{background:#DCE7F5;}
+  .kpi-icon.i-liquid{background:#DDEAF2;}
+  .kpi-icon.i-avg{background:#E9E3F5;}
   .kpi-n{font-family:var(--mono); font-size:24px; font-weight:700; color:var(--ink);}
   .kpi-l{font-size:11.5px; text-transform:uppercase; letter-spacing:.3px; color:var(--ink-soft); margin-top:4px;}
-  .charts-grid{display:grid; grid-template-columns:1.2fr 1fr; gap:16px; margin-top:22px;}
+  .charts-grid{display:grid; grid-template-columns:1.3fr 1fr 1fr; gap:16px; margin-top:22px;}
+  @media (max-width:1100px){ .charts-grid{grid-template-columns:1fr 1fr;} }
   @media (max-width:760px){ .charts-grid{grid-template-columns:1fr;} }
+  .chart-card-header{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:16px;}
+  .chart-card-header h3{margin:0;}
+  .mini-toggle{display:flex; gap:4px;}
+  .mini-toggle button{
+    background:#F0F3F9; border:1px solid var(--line); color:var(--ink-soft);
+    padding:4px 10px; border-radius:14px; font-size:11px; cursor:pointer; font-family:var(--sans);
+  }
+  .mini-toggle button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
   .chart-card{background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:18px;}
   .chart-card h3{margin:0 0 16px; font-size:14.5px; display:flex; align-items:center; gap:8px;}
   .trend-bars{display:flex; align-items:flex-end; gap:8px; height:160px; padding-top:10px;}
@@ -178,7 +195,7 @@
   .obar-row .oname{font-weight:600; color:var(--ink);}
   .obar-row .osup{font-size:10.5px; color:var(--ink-soft); display:block;}
   .obar-track{background:#EFEEE7; border-radius:6px; height:12px; overflow:hidden;}
-  .obar-fill{background:linear-gradient(90deg,var(--moss),#8FA876); height:100%; border-radius:6px;}
+  .obar-fill{background:linear-gradient(90deg,var(--moss),var(--amber)); height:100%; border-radius:6px;}
   .obar-value{font-family:var(--mono); text-align:right; color:var(--moss-deep); font-weight:600;}
   @media print {
     .topbar, nav.tabs, .no-print { display:none !important; }
@@ -237,16 +254,26 @@
         <div>
           <label>Unit</label>
           <select id="s-unit">
-            <option value="g">Grams (g)</option>
-            <option value="kg">Kilograms (kg)</option>
-            <option value="ml">Millilitres (ml)</option>
-            <option value="l">Litres (l)</option>
-            <option value="pcs">Pieces (pcs)</option>
-            <option value="box">Box</option>
-            <option value="tray">Tray</option>
-            <option value="packet">Packet</option>
-            <option value="portion">Portion</option>
-            <option value="dozen">Dozen</option>
+            <optgroup label="Weight">
+              <option value="t">Tonne (t)</option>
+              <option value="kg">Kilogram (kg)</option>
+              <option value="g">Gram (g)</option>
+              <option value="mg">Milligram (mg)</option>
+            </optgroup>
+            <optgroup label="Volume">
+              <option value="l">Litre (l)</option>
+              <option value="ml">Millilitre (ml)</option>
+              <option value="mcl">Microlitre (µl)</option>
+              <option value="nl">Nanolitre (nl)</option>
+            </optgroup>
+            <optgroup label="Count">
+              <option value="pcs">Pieces (pcs)</option>
+              <option value="dozen">Dozen</option>
+              <option value="box">Box</option>
+              <option value="tray">Tray</option>
+              <option value="packet">Packet</option>
+              <option value="portion">Portion</option>
+            </optgroup>
           </select>
         </div>
       </div>
@@ -360,6 +387,10 @@
           <div class="val" id="inv-sup-total-value">AED 0.00</div>
         </div>
         <button class="btn" id="inv-sup-save">Save inventory</button>
+        <div class="row" style="margin-top:12px;">
+          <div><button class="btn ghost small" id="inv-sup-pdf" type="button">Download PDF</button></div>
+          <div><button class="btn ghost small" id="inv-sup-csv" type="button">Download CSV</button></div>
+        </div>
       </div>
     </div>
 
@@ -371,6 +402,7 @@
           <div><label>Date</label><input type="date" id="inv-mgmt-date"></div>
           <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="inv-mgmt-load">Load</button></div>
           <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small outline" id="inv-mgmt-pdf">Download PDF</button></div>
+          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small outline" id="inv-mgmt-csv">Download CSV</button></div>
         </div>
         <div class="scroll-x">
           <table id="inv-mgmt-table">
@@ -423,12 +455,23 @@
 
         <div class="charts-grid">
           <div class="chart-card">
-            <h3>📈 Waste Cost — Last 6 Months</h3>
+            <div class="chart-card-header">
+              <h3>📈 Waste Cost Trend</h3>
+              <div class="mini-toggle" id="trend-toggle">
+                <button data-gran="day">Day</button>
+                <button data-gran="week">Week</button>
+                <button data-gran="month" class="active">Month</button>
+              </div>
+            </div>
             <div class="trend-bars" id="overview-trend"></div>
           </div>
           <div class="chart-card">
-            <h3>🏬 Outlet Analysis — who's responsible</h3>
+            <h3>🏬 Branch-wise waste — who's responsible</h3>
             <div id="overview-outlet-breakdown"></div>
+          </div>
+          <div class="chart-card">
+            <h3>🍴 Item-wise waste</h3>
+            <div id="overview-item-breakdown"></div>
           </div>
         </div>
       </div>
@@ -446,6 +489,7 @@
             <div><label>To</label><input type="date" id="mgmt-to"></div>
             <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="mgmt-filter">Apply filters</button></div>
             <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small outline" id="mgmt-pdf">Download PDF</button></div>
+            <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small outline" id="mgmt-csv">Download CSV</button></div>
           </div>
           <div class="scroll-x">
             <table id="mgmt-table">
@@ -462,54 +506,79 @@
         </div>
       </div>
 
-      <div class="card">
-        <h2>Add / update item cost list</h2>
-        <p class="lead">Cost is entered per base unit — per gram, per millilitre, or per piece — so staff never have to convert anything.</p>
-        <div class="row">
-          <div><label>Item name</label><input type="text" id="new-item-name"></div>
-          <div><label>Category</label><input type="text" id="new-item-cat"></div>
-        </div>
-        <div class="row">
-          <div>
-            <label>Base unit</label>
-            <select id="new-item-unit">
-              <option value="g">Grams (g)</option>
-              <option value="kg">Kilograms (kg)</option>
-              <option value="ml">Millilitres (ml)</option>
-              <option value="l">Litres (l)</option>
-              <option value="pcs">Pieces (pcs)</option>
-              <option value="box">Box</option>
-              <option value="tray">Tray</option>
-              <option value="packet">Packet</option>
-              <option value="portion">Portion</option>
-              <option value="dozen">Dozen</option>
-            </select>
+      <div class="dashboard-grid">
+        <div class="card">
+          <h2>Add / update item cost list</h2>
+          <p class="lead">Cost is entered per base unit — per gram, per millilitre, or per piece — so staff never have to convert anything. Typing an existing item's name here updates it instead of duplicating it.</p>
+          <div class="row">
+            <div><label>Item name</label><input type="text" id="new-item-name"></div>
+            <div><label>Category</label><input type="text" id="new-item-cat"></div>
           </div>
-          <div><label>Cost per base unit (AED)</label><input type="number" id="new-item-cost" step="0.0001" placeholder="e.g. 0.0285"></div>
+          <div class="row">
+            <div>
+              <label>Base unit</label>
+              <select id="new-item-unit">
+                <optgroup label="Weight">
+                  <option value="t">Tonne (t)</option>
+                  <option value="kg">Kilogram (kg)</option>
+                  <option value="g">Gram (g)</option>
+                  <option value="mg">Milligram (mg)</option>
+                </optgroup>
+                <optgroup label="Volume">
+                  <option value="l">Litre (l)</option>
+                  <option value="ml">Millilitre (ml)</option>
+                  <option value="mcl">Microlitre (µl)</option>
+                  <option value="nl">Nanolitre (nl)</option>
+                </optgroup>
+                <optgroup label="Count">
+                  <option value="pcs">Pieces (pcs)</option>
+                  <option value="dozen">Dozen</option>
+                  <option value="box">Box</option>
+                  <option value="tray">Tray</option>
+                  <option value="packet">Packet</option>
+                  <option value="portion">Portion</option>
+                </optgroup>
+              </select>
+            </div>
+            <div><label>Cost per base unit (AED)</label><input type="number" id="new-item-cost" step="0.0001" placeholder="e.g. 0.0285"></div>
+          </div>
+          <button class="btn small" id="add-item-btn" style="margin-top:14px;">Add / update item</button>
         </div>
-        <button class="btn small" id="add-item-btn" style="margin-top:14px;">Add item</button>
+
+        <div class="card">
+          <h2>💲 Item price list</h2>
+          <p class="lead">Everything currently priced — click any row to load it into the form for editing.</p>
+          <div class="scroll-x" style="max-height:320px; overflow-y:auto;">
+            <table id="item-price-table">
+              <thead><tr><th>Item</th><th>Category</th><th>Unit</th><th>Cost/Unit</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
-      <div class="card">
-        <h2>Add outlet</h2>
-        <div class="row">
-          <div><label>Outlet name</label><input type="text" id="new-outlet-name"></div>
-          <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="add-outlet-btn">Add outlet</button></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h2>Create a supervisor login</h2>
-        <p class="lead">Set up or reset a username/password for a supervisor at a specific outlet.</p>
-        <div class="row">
-          <div>
-            <label>Outlet</label>
-            <select id="new-sup-outlet"><option value="">Loading outlets…</option></select>
+      <div class="dashboard-grid">
+        <div class="card">
+          <h2>Create a supervisor login</h2>
+          <p class="lead">Set up or reset a username/password for a supervisor at a specific outlet.</p>
+          <div class="row">
+            <div>
+              <label>Outlet</label>
+              <select id="new-sup-outlet"><option value="">Loading outlets…</option></select>
+            </div>
+            <div><label>Username</label><input type="text" id="new-sup-username" placeholder="e.g. louvre.sup"></div>
+            <div><label>Password</label><input type="text" id="new-sup-password" placeholder="Set a password"></div>
           </div>
-          <div><label>Username</label><input type="text" id="new-sup-username" placeholder="e.g. louvre.sup"></div>
-          <div><label>Password</label><input type="text" id="new-sup-password" placeholder="Set a password"></div>
+          <button class="btn small" id="add-sup-btn" style="margin-top:14px;">Save supervisor login</button>
         </div>
-        <button class="btn small" id="add-sup-btn" style="margin-top:14px;">Save supervisor login</button>
+
+        <div class="card">
+          <h2>Add outlet</h2>
+          <div class="row">
+            <div><label>Outlet name</label><input type="text" id="new-outlet-name"></div>
+            <div style="flex:0 0 auto; align-self:flex-end;"><button class="btn small" id="add-outlet-btn">Add outlet</button></div>
+          </div>
+        </div>
       </div>
     </div>
   </section>
@@ -623,7 +692,7 @@ function reportsTableHtml(rows) {
 
 let ITEMS = [];
 let OUTLETS = [];
-const UNIT_LABEL = { g: "grams", kg: "kilograms", ml: "millilitres", l: "litres", pcs: "pieces", box: "boxes", tray: "trays", packet: "packets", portion: "portions", dozen: "dozens" };
+const UNIT_LABEL = { t: "tonnes", kg: "kilograms", g: "grams", mg: "milligrams", l: "litres", ml: "millilitres", mcl: "microlitres", nl: "nanolitres", pcs: "pieces", dozen: "dozens", box: "boxes", tray: "trays", packet: "packets", portion: "portions" };
 
 function findItem(name) {
   return ITEMS.find(i => i.ItemName.toLowerCase() === String(name || "").toLowerCase());
@@ -783,16 +852,26 @@ function newBatchRow() {
       <div>
         <label>Unit</label>
         <select class="b-unit">
-          <option value="g">Grams (g)</option>
-          <option value="kg">Kilograms (kg)</option>
-          <option value="ml">Millilitres (ml)</option>
-          <option value="l">Litres (l)</option>
-          <option value="pcs">Pieces (pcs)</option>
-          <option value="box">Box</option>
-          <option value="tray">Tray</option>
-          <option value="packet">Packet</option>
-          <option value="portion">Portion</option>
-          <option value="dozen">Dozen</option>
+          <optgroup label="Weight">
+            <option value="t">Tonne (t)</option>
+            <option value="kg">Kilogram (kg)</option>
+            <option value="g">Gram (g)</option>
+            <option value="mg">Milligram (mg)</option>
+          </optgroup>
+          <optgroup label="Volume">
+            <option value="l">Litre (l)</option>
+            <option value="ml">Millilitre (ml)</option>
+            <option value="mcl">Microlitre (µl)</option>
+            <option value="nl">Nanolitre (nl)</option>
+          </optgroup>
+          <optgroup label="Count">
+            <option value="pcs">Pieces (pcs)</option>
+            <option value="dozen">Dozen</option>
+            <option value="box">Box</option>
+            <option value="tray">Tray</option>
+            <option value="packet">Packet</option>
+            <option value="portion">Portion</option>
+          </optgroup>
         </select>
       </div>
       <div><label>Quantity</label><input type="number" class="b-qty" min="0" step="1" placeholder="e.g. 250"></div>
@@ -989,10 +1068,15 @@ function refreshInventoryTabVisibility() {
   }
 }
 
+let lastInvSupRows = [];
+let lastInvSupDate = "";
+
 async function loadSupInventory() {
   const date = document.getElementById("inv-sup-date").value || todayStr();
   try {
     const rows = await api("getInventory", { date, outlet: supSession.outlet });
+    lastInvSupRows = rows;
+    lastInvSupDate = date;
     const tbody = document.querySelector("#inv-sup-table tbody");
     tbody.innerHTML = rows.map(r => `
       <tr data-item="${r.ItemName}" data-original-opening="${r.Opening}">
@@ -1013,6 +1097,45 @@ async function loadSupInventory() {
   }
 }
 document.getElementById("inv-sup-load").addEventListener("click", loadSupInventory);
+
+document.getElementById("inv-sup-pdf").addEventListener("click", () => {
+  if (!lastInvSupRows.length) return toast("Load a date first.", true);
+  const win = window.open("", "_blank");
+  const totalValue = lastInvSupRows.reduce((s, r) => s + Number(r.Value || 0), 0);
+  const rowsHtml = lastInvSupRows.map(r => `
+    <tr>
+      <td>${r.ItemName}</td><td>${r.Unit || "—"}</td><td>${r.Opening}</td>
+      <td>${r.Received}</td><td>${r.Wasted}</td><td>${r.Available}</td>
+      <td>${fmtMoney(r.CostPerUnit)}</td><td>${fmtMoney(r.Value)}</td>
+    </tr>
+  `).join("");
+  win.document.write(`
+    <html><head><title>Inventory Report</title>
+    <style>
+      body{font-family:sans-serif; padding:24px; color:#0A1730;}
+      h1{font-size:18px;}
+      table{width:100%; border-collapse:collapse; font-size:12px;}
+      th,td{border:1px solid #ccc; padding:6px; text-align:left;}
+      th{background:#f0f2f7;}
+    </style></head><body>
+    <h1>Aptitude Waste Portal — Inventory Report</h1>
+    <p>Outlet: ${supSession.outlet} · Date: ${lastInvSupDate} · Generated: ${new Date().toLocaleString()} · Total inventory value: ${fmtMoney(totalValue)}</p>
+    <table><thead><tr><th>Item</th><th>Unit</th><th>Opening</th><th>Item Received</th><th>Wasted</th><th>Available</th><th>Cost/Unit</th><th>Value</th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table>
+    </body></html>
+  `);
+  win.document.close();
+  setTimeout(() => win.print(), 400);
+});
+
+document.getElementById("inv-sup-csv").addEventListener("click", () => {
+  if (!lastInvSupRows.length) return toast("Load a date first.", true);
+  downloadCsv(
+    `inventory-${supSession.outlet}-${lastInvSupDate}.csv`,
+    ["Item", "Unit", "Opening", "Item Received", "Wasted", "Available", "Cost/Unit (AED)", "Value (AED)"],
+    lastInvSupRows.map(r => [r.ItemName, r.Unit, r.Opening, r.Received, r.Wasted, r.Available, r.CostPerUnit, r.Value])
+  );
+});
 
 document.getElementById("inv-sup-save").addEventListener("click", async () => {
   const date = document.getElementById("inv-sup-date").value || todayStr();
@@ -1125,6 +1248,7 @@ document.getElementById("mgmt-login-btn").addEventListener("click", async () => 
     const allItems = await api("getItems");
     mgmtPendingPriceItems = allItems.filter(i => !Number(i.CostPerUnit)).map(i => i.ItemName);
     mgmtPendingPriceCount = mgmtPendingPriceItems.length;
+    renderItemPriceList(allItems);
 
     const supervisors = await api("getSupervisorsList");
     mgmtSupervisorsMap = {};
@@ -1180,10 +1304,10 @@ function renderCategoryBreakdown(rows) {
   const maxCost = Math.max(1, ...list.map(c => c.cost));
 
   document.getElementById("mgmt-category-breakdown").innerHTML = list.length
-    ? list.map(c => `
+    ? list.map((c, i) => `
       <div class="obar-row clickable" onclick="document.getElementById('mgmt-category').value='${c.name.replace(/'/g, "\\'")}'; loadMgmtReports();">
         <div><span class="oname">${c.name}</span><span class="osup">${c.count} report(s)</span></div>
-        <div class="obar-track"><div class="obar-fill" style="width:${(c.cost/maxCost*100).toFixed(0)}%"></div></div>
+        <div class="obar-track"><div class="obar-fill" style="width:${(c.cost/maxCost*100).toFixed(0)}%; background:${colorFor(i)};"></div></div>
         <div class="obar-value">${fmtMoney(c.cost)}</div>
       </div>
     `).join("")
@@ -1276,20 +1400,36 @@ async function loadOverview() {
   const maxCost = Math.max(1, ...outletList.map(o => o.cost));
 
   document.getElementById("overview-outlet-breakdown").innerHTML = outletList.length
-    ? outletList.map(o => `
+    ? outletList.map((o, i) => `
       <div class="obar-row clickable" onclick="openOverviewDetail('outlet', '${o.name.replace(/'/g, "\\'")}')">
         <div>
           <span class="oname">${o.name}</span>
           <span class="osup">${(mgmtSupervisorsMap[o.name] || []).join(", ") || "No supervisor assigned"}</span>
         </div>
-        <div class="obar-track"><div class="obar-fill" style="width:${(o.cost/maxCost*100).toFixed(0)}%"></div></div>
+        <div class="obar-track"><div class="obar-fill" style="width:${(o.cost/maxCost*100).toFixed(0)}%; background:${colorFor(i)};"></div></div>
         <div class="obar-value">${fmtMoney(o.cost)}</div>
+      </div>
+    `).join("")
+    : `<p class="lead">No waste reported in this period.</p>`;
+
+  const itemList = Object.entries(byItem).map(([name, cost]) => ({ name, cost }))
+    .sort((a, b) => b.cost - a.cost).slice(0, 8);
+  const maxItemCost = Math.max(1, ...itemList.map(i => i.cost));
+  document.getElementById("overview-item-breakdown").innerHTML = itemList.length
+    ? itemList.map((it, i) => `
+      <div class="obar-row clickable" onclick="openOverviewDetail('itemname', '${it.name.replace(/'/g, "\\'")}')">
+        <div><span class="oname">${it.name}</span></div>
+        <div class="obar-track"><div class="obar-fill" style="width:${(it.cost/maxItemCost*100).toFixed(0)}%; background:${colorFor(i)};"></div></div>
+        <div class="obar-value">${fmtMoney(it.cost)}</div>
       </div>
     `).join("")
     : `<p class="lead">No waste reported in this period.</p>`;
 
   loadTrendChart();
 }
+
+const PALETTE = ['#1B3A73', '#C9971E', '#2A9D8F', '#8E44AD', '#E76F51', '#3D5A80', '#B5651D', '#588157'];
+function colorFor(i) { return PALETTE[i % PALETTE.length]; }
 
 let lastOverviewRows = [];
 let lastOverviewLabel = "";
@@ -1331,41 +1471,70 @@ function openOverviewDetail(kind, arg) {
   } else if (kind === "outlet") {
     const rows = lastOverviewRows.filter(r => r.Outlet === arg);
     showDetailModal(`${arg} — ${lastOverviewLabel}`, reportsTableHtml(rows));
+  } else if (kind === "itemname") {
+    const rows = lastOverviewRows.filter(r => r.ItemName === arg);
+    showDetailModal(`${arg} — ${lastOverviewLabel}`, reportsTableHtml(rows));
   }
 }
 
+let trendGranularity = "month";
+
+document.querySelectorAll("#trend-toggle button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#trend-toggle button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    trendGranularity = btn.dataset.gran;
+    loadTrendChart();
+  });
+});
+
 async function loadTrendChart() {
-  // Always the trailing 6 calendar months, independent of the period toggle above —
-  // gives management a stable trend view regardless of which period they're drilling into.
   const now = new Date();
-  const monthStarts = [];
-  for (let i = 5; i >= 0; i--) {
-    monthStarts.push(new Date(now.getFullYear(), now.getMonth() - i, 1));
+  let buckets = []; // { key, label, from: Date, to: Date }
+
+  if (trendGranularity === "day") {
+    for (let i = 13; i >= 0; i--) {
+      const d = new Date(now); d.setDate(now.getDate() - i);
+      buckets.push({ key: toISO(d), label: String(d.getDate()) + "/" + pad2(d.getMonth() + 1), from: d, to: d });
+    }
+  } else if (trendGranularity === "week") {
+    for (let i = 7; i >= 0; i--) {
+      const weekStart = new Date(now);
+      const day = weekStart.getDay();
+      const diffToMonday = (day === 0 ? 6 : day - 1);
+      weekStart.setDate(weekStart.getDate() - diffToMonday - (i * 7));
+      const weekEnd = new Date(weekStart); weekEnd.setDate(weekStart.getDate() + 6);
+      buckets.push({ key: toISO(weekStart), label: String(weekStart.getDate()) + "/" + pad2(weekStart.getMonth() + 1), from: weekStart, to: weekEnd });
+    }
+  } else {
+    const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    for (let i = 5; i >= 0; i--) {
+      const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const mEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 0);
+      buckets.push({ key: monthNames[m.getMonth()] + m.getFullYear(), label: monthNames[m.getMonth()], from: m, to: mEnd });
+    }
   }
-  const rangeFrom = toISO(monthStarts[0]);
+
+  const rangeFrom = toISO(buckets[0].from);
   const rangeTo = toISO(now);
   const rows = await api("getReports", { dateFrom: rangeFrom, dateTo: rangeTo });
 
-  const monthKey = (d) => d.getFullYear() + "-" + pad2(d.getMonth() + 1);
-  const totals = {};
-  monthStarts.forEach(m => totals[monthKey(m)] = 0);
+  buckets.forEach(b => { b.total = 0; });
   rows.forEach(r => {
     const d = new Date(r.Timestamp);
-    const key = monthKey(d);
-    if (totals[key] !== undefined) totals[key] += Number(r.TotalCost || 0);
+    const dStr = toISO(d);
+    const bucket = buckets.find(b => dStr >= toISO(b.from) && dStr <= toISO(b.to));
+    if (bucket) bucket.total += Number(r.TotalCost || 0);
   });
 
-  const maxVal = Math.max(1, ...Object.values(totals));
-  const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const maxVal = Math.max(1, ...buckets.map(b => b.total));
 
-  document.getElementById("overview-trend").innerHTML = monthStarts.map(m => {
-    const key = monthKey(m);
-    const val = totals[key];
-    const pct = Math.max(3, (val / maxVal * 100));
+  document.getElementById("overview-trend").innerHTML = buckets.map(b => {
+    const pct = Math.max(3, (b.total / maxVal * 100));
     return `
-      <div class="trend-bar-wrap" title="${fmtMoney(val)}">
+      <div class="trend-bar-wrap" title="${fmtMoney(b.total)}">
         <div class="trend-bar" style="height:${pct}%"></div>
-        <div class="trend-label">${monthNames[m.getMonth()]}</div>
+        <div class="trend-label">${b.label}</div>
       </div>
     `;
   }).join("");
@@ -1402,6 +1571,40 @@ document.getElementById("mgmt-pdf").addEventListener("click", () => {
   setTimeout(() => win.print(), 400);
 });
 
+function downloadCsv(filename, headers, rows) {
+  const escapeCell = (v) => {
+    const s = String(v === undefined || v === null ? "" : v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [headers.join(",")]
+    .concat(rows.map(row => row.map(escapeCell).join(",")))
+    .join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById("mgmt-csv").addEventListener("click", () => {
+  if (!lastMgmtRows.length) return toast("No reports to export — adjust filters first.", true);
+  downloadCsv(
+    `waste-report-${todayStr()}.csv`,
+    ["Date", "Outlet", "Item", "Category", "Qty", "Unit", "Cost (AED)", "Staff", "Photo URL", "Notes"],
+    lastMgmtRows.map(r => [fmtDate(r.Timestamp), r.Outlet, r.ItemName, r.Category, r.Qty, r.Unit, r.TotalCost, r.PosterName, r.PhotoURL, r.Notes])
+  );
+});
+
+document.getElementById("inv-mgmt-csv").addEventListener("click", () => {
+  if (!lastInvMgmtRows.length) return toast("Load an outlet/date first.", true);
+  downloadCsv(
+    `inventory-${lastInvMgmtMeta.outlet}-${lastInvMgmtMeta.date}.csv`,
+    ["Item", "Unit", "Opening", "Item Received", "Wasted", "Available", "Cost/Unit (AED)", "Value (AED)"],
+    lastInvMgmtRows.map(r => [r.ItemName, r.Unit, r.Opening, r.Received, r.Wasted, r.Available, r.CostPerUnit, r.Value])
+  );
+});
+
 document.getElementById("add-item-btn").addEventListener("click", async () => {
   try {
     await api("addItem", {
@@ -1410,16 +1613,37 @@ document.getElementById("add-item-btn").addEventListener("click", async () => {
       unit: document.getElementById("new-item-unit").value,
       costPerUnit: Number(document.getElementById("new-item-cost").value)
     });
-    toast("Item added.");
+    toast("Item saved.");
     document.getElementById("new-item-name").value = "";
     document.getElementById("new-item-cat").value = "";
     document.getElementById("new-item-cost").value = "";
     const allItems = await api("getItems");
     mgmtPendingPriceItems = allItems.filter(i => !Number(i.CostPerUnit)).map(i => i.ItemName);
     mgmtPendingPriceCount = mgmtPendingPriceItems.length;
+    renderItemPriceList(allItems);
     loadOverview();
   } catch (e) { toast(e.message, true); }
 });
+
+function renderItemPriceList(items) {
+  const sorted = [...items].sort((a, b) => a.ItemName.localeCompare(b.ItemName));
+  const tbody = document.querySelector("#item-price-table tbody");
+  tbody.innerHTML = sorted.length ? sorted.map(i => `
+    <tr onclick="loadItemIntoForm('${i.ItemName.replace(/'/g, "\\'")}', '${(i.Category||"").replace(/'/g, "\\'")}', '${i.Unit||"g"}', ${Number(i.CostPerUnit)||0})">
+      <td>${i.ItemName}</td><td>${i.Category || "—"}</td><td>${i.Unit || "—"}</td>
+      <td class="cost">${Number(i.CostPerUnit) ? fmtMoney(i.CostPerUnit) : "⏳ Not priced"}</td>
+    </tr>
+  `).join("") : `<tr><td colspan="4">No items yet.</td></tr>`;
+}
+
+function loadItemIntoForm(name, category, unit, cost) {
+  document.getElementById("new-item-name").value = name;
+  document.getElementById("new-item-cat").value = category;
+  document.getElementById("new-item-unit").value = unit;
+  document.getElementById("new-item-cost").value = cost || "";
+  document.getElementById("new-item-name").scrollIntoView({ behavior: "smooth", block: "center" });
+  toast(`Loaded "${name}" — edit and click "Add / update item" to save changes.`);
+}
 
 document.getElementById("add-outlet-btn").addEventListener("click", async () => {
   try {
