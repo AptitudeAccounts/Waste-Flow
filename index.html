@@ -154,7 +154,13 @@
     padding:7px 14px; border-radius:20px; font-size:12.5px; cursor:pointer; font-family:var(--sans);
   }
   .period-toggle button.active{background:var(--moss); border-color:var(--moss); color:#fff; font-weight:600;}
-  .kpi-grid{display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:14px; margin-top:16px;}
+  .kpi-grid{display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-top:16px;}
+  @media (max-width:900px){ .kpi-grid{grid-template-columns:repeat(2, 1fr);} }
+  @media (max-width:480px){ .kpi-grid{grid-template-columns:1fr;} }
+  .kpi-delta{font-size:11px; font-weight:700; margin-top:2px;}
+  .kpi-delta.down{color:#1B7A3D;}
+  .kpi-delta.up{color:var(--danger);}
+  .kpi-delta.flat{color:var(--ink-soft);}
   .kpi-card{background:var(--panel); border:1px solid var(--line); border-radius:13px; padding:16px; cursor:pointer; transition:.15s;}
   .kpi-card:hover{border-color:var(--moss); box-shadow:0 4px 14px rgba(0,0,0,.07); transform:translateY(-1px);}
   .obar-row.clickable{cursor:pointer; transition:.15s;}
@@ -1341,6 +1347,45 @@ function periodRange(period) {
   };
 }
 
+// The comparable immediately-preceding period, for "vs last period" deltas —
+// e.g. Today vs Yesterday, This Week vs Last Week, This Month vs same-length
+// stretch of the previous month (so a partial current month compares fairly).
+function previousPeriodRange(period) {
+  const now = new Date();
+  if (period === "today") {
+    const y = new Date(now); y.setDate(now.getDate() - 1);
+    return { from: toISO(y), to: toISO(y) };
+  }
+  if (period === "week") {
+    const day = now.getDay();
+    const diffToMonday = (day === 0 ? 6 : day - 1);
+    const thisMonday = new Date(now); thisMonday.setDate(now.getDate() - diffToMonday);
+    const lastMonday = new Date(thisMonday); lastMonday.setDate(thisMonday.getDate() - 7);
+    const lastSameDay = new Date(lastMonday); lastSameDay.setDate(lastMonday.getDate() + diffToMonday);
+    return { from: toISO(lastMonday), to: toISO(lastSameDay) };
+  }
+  if (period === "month") {
+    const prevMonthFirst = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const sameDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    return { from: toISO(prevMonthFirst), to: toISO(sameDayLastMonth) };
+  }
+  // custom: mirror the same length of days immediately before the chosen range
+  const from = new Date(document.getElementById("overview-from").value || now);
+  const to = new Date(document.getElementById("overview-to").value || now);
+  const spanDays = Math.max(1, Math.round((to - from) / 86400000) + 1);
+  const prevTo = new Date(from); prevTo.setDate(from.getDate() - 1);
+  const prevFrom = new Date(prevTo); prevFrom.setDate(prevTo.getDate() - spanDays + 1);
+  return { from: toISO(prevFrom), to: toISO(prevTo) };
+}
+
+function deltaChip(current, previous, label) {
+  if (!previous) return `<div class="kpi-delta flat">No prior data</div>`;
+  const pct = ((current - previous) / previous) * 100;
+  const cls = Math.abs(pct) < 1 ? "flat" : (pct > 0 ? "up" : "down");
+  const arrow = Math.abs(pct) < 1 ? "→" : (pct > 0 ? "▲" : "▼");
+  return `<div class="kpi-delta ${cls}">${arrow} ${Math.abs(pct).toFixed(0)}% vs ${label}</div>`;
+}
+
 document.querySelectorAll("#overview-period-toggle button").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll("#overview-period-toggle button").forEach(b => b.classList.remove("active"));
@@ -1372,20 +1417,41 @@ async function loadOverview() {
     byItem[r.ItemName] = (byItem[r.ItemName] || 0) + Number(r.TotalCost || 0);
   });
   const topItemEntry = Object.entries(byItem).sort((a, b) => b[1] - a[1])[0];
-  const topItemLabel = topItemEntry ? topItemEntry[0] : "—";
+  const topItemLabel = topItemEntry ? topItemEntry[0] : "No data yet";
   const topItemCost = topItemEntry ? topItemEntry[1] : 0;
 
   const reportingOutlets = new Set(rows.map(r => r.Outlet));
   const outletsReporting = reportingOutlets.size;
 
+  // Previous-period comparison, CFO-style — skipped for "custom" only when no range is set.
+  let prevTotalCost = 0, prevTotalReports = 0, prevAvgCost = 0, havePrev = false;
+  if (overviewPeriod !== "custom" || (document.getElementById("overview-from").value && document.getElementById("overview-to").value)) {
+    const prevRange = previousPeriodRange(overviewPeriod);
+    const prevRows = await api("getReports", { dateFrom: prevRange.from, dateTo: prevRange.to });
+    prevTotalCost = prevRows.reduce((s, r) => s + Number(r.TotalCost || 0), 0);
+    prevTotalReports = prevRows.length;
+    prevAvgCost = prevTotalReports ? prevTotalCost / prevTotalReports : 0;
+    havePrev = true;
+  }
+  const prevLabel = { today: "yesterday", week: "last week", month: "last month", custom: "prior period" }[overviewPeriod];
+
   document.getElementById("overview-kpis").innerHTML = `
-    <div class="kpi-card" onclick="openOverviewDetail('all')"><div class="kpi-icon i-cost">💰</div><div class="kpi-n">${fmtMoney(totalCost)}</div><div class="kpi-l">Total waste cost</div></div>
-    <div class="kpi-card" onclick="openOverviewDetail('all')"><div class="kpi-icon i-reports">📋</div><div class="kpi-n">${totalReports}</div><div class="kpi-l">Reports logged</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('all')">
+      <div class="kpi-icon i-cost">💰</div><div class="kpi-n">${fmtMoney(totalCost)}</div><div class="kpi-l">Total waste cost</div>
+      ${havePrev ? deltaChip(totalCost, prevTotalCost, prevLabel) : ""}
+    </div>
+    <div class="kpi-card" onclick="openOverviewDetail('all')">
+      <div class="kpi-icon i-reports">📋</div><div class="kpi-n">${totalReports}</div><div class="kpi-l">Reports logged</div>
+      ${havePrev ? deltaChip(totalReports, prevTotalReports, prevLabel) : ""}
+    </div>
+    <div class="kpi-card" onclick="openOverviewDetail('all')">
+      <div class="kpi-icon i-avg">📊</div><div class="kpi-n">${fmtMoney(avgCost)}</div><div class="kpi-l">Average cost / report</div>
+      ${havePrev ? deltaChip(avgCost, prevAvgCost, prevLabel) : ""}
+    </div>
+    <div class="kpi-card" onclick="openOverviewDetail('outlets')"><div class="kpi-icon i-weight">🏬</div><div class="kpi-n">${outletsReporting}/${mgmtTotalOutlets}</div><div class="kpi-l">Outlets reporting this period</div></div>
     <div class="kpi-card" onclick="openOverviewDetail('weight')"><div class="kpi-icon i-weight">⚖️</div><div class="kpi-n">${(grams/1000).toFixed(2)} kg</div><div class="kpi-l">Total weight waste</div></div>
     <div class="kpi-card" onclick="openOverviewDetail('liquid')"><div class="kpi-icon i-liquid">💧</div><div class="kpi-n">${(liquid/1000).toFixed(2)} L</div><div class="kpi-l">Total liquid waste</div></div>
-    <div class="kpi-card" onclick="openOverviewDetail('all')"><div class="kpi-icon i-avg">📊</div><div class="kpi-n">${fmtMoney(avgCost)}</div><div class="kpi-l">Average cost / report</div></div>
-    <div class="kpi-card" onclick="openOverviewDetail('topitem')"><div class="kpi-icon i-cost">🥇</div><div class="kpi-n" style="font-size:16px;">${topItemLabel}</div><div class="kpi-l">Top wasted item (${fmtMoney(topItemCost)})</div></div>
-    <div class="kpi-card" onclick="openOverviewDetail('outlets')"><div class="kpi-icon i-weight">🏬</div><div class="kpi-n">${outletsReporting}/${mgmtTotalOutlets}</div><div class="kpi-l">Outlets reporting this period</div></div>
+    <div class="kpi-card" onclick="openOverviewDetail('topitem')"><div class="kpi-icon i-cost">🥇</div><div class="kpi-n" style="font-size:15px;">${topItemLabel}</div><div class="kpi-l">Top wasted item${topItemEntry ? " (" + fmtMoney(topItemCost) + ")" : ""}</div></div>
     <div class="kpi-card" onclick="openOverviewDetail('pending')"><div class="kpi-icon i-liquid">⏳</div><div class="kpi-n">${mgmtPendingPriceCount}</div><div class="kpi-l">Items awaiting a price</div></div>
   `;
 
