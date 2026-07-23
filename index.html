@@ -744,7 +744,6 @@ function recalcCost() {
     categoryInput.value = item.Category || "";
     categoryInput.readOnly = true;
     categoryInput.placeholder = "Auto-set from item";
-    unitSel.value = item.Unit || "g";
     newItemHint.style.display = "none";
   } else {
     categoryInput.readOnly = false;
@@ -758,8 +757,13 @@ function recalcCost() {
   const costPerUnit = item ? Number(item.CostPerUnit) : 0;
   document.getElementById("s-cost").textContent = fmtMoney(qty * costPerUnit);
 }
+function applyDefaultUnitForCurrentItem() {
+  const item = findItem(getStaffItemName());
+  if (item) document.getElementById("s-unit").value = item.Unit || "g";
+}
 document.getElementById("s-item-select").addEventListener("change", (e) => {
   document.getElementById("s-item-other").style.display = e.target.value === "__other__" ? "block" : "none";
+  applyDefaultUnitForCurrentItem();
   recalcCost();
 });
 document.getElementById("s-item-new").addEventListener("input", recalcCost);
@@ -917,7 +921,6 @@ function newBatchRow() {
       categoryInput.value = item.Category || "";
       categoryInput.readOnly = true;
       categoryInput.placeholder = "Auto-set from item";
-      unitSelect.value = item.Unit || "g";
     } else {
       categoryInput.readOnly = false;
       categoryInput.placeholder = "e.g. Meat";
@@ -927,8 +930,13 @@ function newBatchRow() {
     div.querySelector(".b-line-cost").textContent = "Cost: " + fmtMoney(cost);
     updateBatchTotal();
   }
+  function applyDefaultUnitForLine() {
+    const item = findItem(currentLineItemName());
+    if (item) unitSelect.value = item.Unit || "g";
+  }
   itemSelect.addEventListener("change", () => {
     itemOtherWrap.style.display = itemSelect.value === "__other__" ? "block" : "none";
+    applyDefaultUnitForLine();
     recalcLine();
   });
   itemNewInput.addEventListener("input", recalcLine);
